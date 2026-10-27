@@ -227,3 +227,11 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 Actual-WASM дополнительно проверяет output больше32MiB/1000 записей, сохранение источников, metadata corruption до destination calls и winning payload CRC во время streaming. Browser cases проверяют reopen/ordering/tombstones, preflight без I/O, missing/locked sources без candidate, corrupt source с пустым orphan, close/flush failures и create с неизвестным исходом. Полные команды остаются `pnpm check:all` или последовательностью `pnpm check:js`, `pnpm check:rust`, `pnpm test:bench`, `HOKE_BROWSER_CHANNEL=chrome pnpm test:browser`.
 
 Слияние ещё не переключает openDB active state, поэтому нельзя проверять его кнопкой compaction в текущем демо. Это внутренний файловый примитив по [ADR0016](adr/0016-sst-merge-candidates.md), не доказательство root publication или power-loss safety.
+
+## 20. Чтение WAL и SST (C5c)
+
+После реализации среза общий `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` проверяет252 JS,212 Rust,41 actual-WASM,11 Python и69 Chrome cases. Новые сценарии:7 native read_sources,7 WASM read-view и6 OPFS Worker.
+
+Проверяются WAL/SST precedence, tombstones/reinsert, byte bounds/FF prefix/reverse/live-row limit, selected CRC/I/O failures без устаревшего fallback, zero/точный byte budget, закрытие view/WAL, immutable source bytes и cleanup при missing/corrupt/locked sources. Actual-WASM проверяет полный packet32MiB отдельно от payload budget; реальный Worker проверяет first-init concurrency с одной загрузкой WASM и сохранением Rust allocations.
+
+View использует переданный живой WAL и не сохраняет snapshot. Он пока внутренний, в openDB UI не подключён; publication/root selection этим набором не проверяются. Контракт — [ADR0017](adr/0017-layered-reads.md).

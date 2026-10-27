@@ -6,6 +6,8 @@
 
 - Добавлено потоковое объединение SST-кандидатов через Rust/WASM/OPFS: newest wins, tombstones сохранены, исходники не удаляются; authoritative publication ещё не включена.
 
+- Добавлен внутренний live read view поверх WAL и SST: единые Rust правила версий, bounded scan, tombstone masking и общее WASM initialization.
+
 ### JavaScript package
 
 - Synchronous KV with memory and explicit localStorage adapters.

@@ -1,6 +1,7 @@
-import initWasm, { WasmSst } from "../../wasm/hoke_wasm.js";
+import { WasmSst } from "../../wasm/hoke_wasm.js";
 import { MAX_KEY_BYTES, MAX_VALUE_BYTES } from "./protocol.js";
 import { compareBytes, type DBScanOptions, MAX_SCAN_BYTES, normalizeScanOptions } from "./scan.js";
+import { initializeWasm } from "./wasm-init.js";
 
 /** Internal building block only: no manifest, publication, or garbage collection. */
 export interface SstEntry {
@@ -33,14 +34,6 @@ export class SstFileError extends Error {
   }
 }
 
-let loading: Promise<unknown> | undefined;
-function initialize(): Promise<unknown> {
-  loading ??= initWasm().catch((error: unknown) => {
-    loading = undefined;
-    throw error;
-  });
-  return loading;
-}
 function validName(name: string): void {
   if (typeof name !== "string" || !/^[A-Za-z0-9_-]+\.sst$/.test(name)) {
     throw new TypeError("Expected a single SST filename ending in .sst");
@@ -245,7 +238,7 @@ export async function createSstCandidate(
   entries: readonly SstEntry[],
 ): Promise<SstFile> {
   const packet = pack(entries);
-  await initialize();
+  await initializeWasm();
   return acquire(directory, await candidateName(directory), packet);
 }
 
@@ -268,7 +261,7 @@ export async function mergeSstCandidates(
     if (unique.has(name)) throw new TypeError("SST source filenames must be unique");
     unique.add(name);
   }
-  await initialize();
+  await initializeWasm();
   const inputs: SstSyncHandle[] = [];
   let output: SstSyncHandle | undefined;
   let engine: WasmSst | undefined;
@@ -324,6 +317,6 @@ export async function mergeSstCandidates(
 }
 export async function openSstFile(directory: SstDirectory, name: string): Promise<SstFile> {
   validName(name);
-  await initialize();
+  await initializeWasm();
   return acquire(directory, name);
 }

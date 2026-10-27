@@ -1,4 +1,4 @@
-import initWasm, { WasmWal } from "../../wasm/hoke_wasm.js";
+import { WasmWal } from "../../wasm/hoke_wasm.js";
 import {
   type DBErrorCode,
   MAX_KEY_BYTES,
@@ -9,6 +9,7 @@ import {
   validName,
 } from "./protocol.js";
 import { MAX_SCAN_BYTES, normalizeScanOptions } from "./scan.js";
+import { initializeWasm } from "./wasm-init.js";
 
 interface SyncHandle {
   getSize(): number;
@@ -118,7 +119,7 @@ async function open(name: string): Promise<void> {
     );
   }
   // Loading or compiling WASM must succeed before creating any OPFS entries.
-  await initWasm();
+  await initializeWasm();
   let acquired: SyncHandle | undefined;
   try {
     const root = await scope.navigator.storage.getDirectory();

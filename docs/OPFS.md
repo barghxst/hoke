@@ -181,3 +181,9 @@ Listeners снимаются также при error ACK, timeout, transport/pro
 Внутренний mergeSstCandidates(directory,names) объединяет до64 SST в новый файл: имена передаются от старых данных к новым, последнее значение ключа побеждает, tombstones сохраняются. Файлы-источники остаются неизменными. Rust merge читает выбранные values по одной записи; итоговый файл может превышать32MiB и1000 записей, scan сохраняет свои прежние пределы.
 
 Это файловая часть compaction, пока без изменения active state openDB. Успех означает подготовленный file candidate, а не пользовательский commit или разрешение удалить источники. [ADR0016](adr/0016-sst-merge-candidates.md) описывает ordering, владение handles, ошибки и lazy CRC.
+
+## Чтение WAL поверх SST (C5c)
+
+Внутренний SstReadView держит индексы и handles нескольких SST, а на каждый get/scan получает живой WasmWal. Новые WAL values и tombstones перекрывают SST; более новая SST перекрывает старую. Scan возвращает только живые уникальные строки с прежними range/prefix/reverse/limit правилами. Закрытие view не закрывает WAL.
+
+Это общий путь чтения для будущего контейнерного backend, пока без переключения openDB. Он использует те же Rust правила, что native point get; и общий строгий decoder с Worker client. First-init WASM сериализован между внутренними файловыми модулями. Контракт — [ADR0017](adr/0017-layered-reads.md).

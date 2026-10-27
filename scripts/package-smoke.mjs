@@ -26,6 +26,9 @@ try {
   assert(contents.includes("package/dist/react/index.js"));
   assert(contents.includes("package/dist/db/worker.js"));
   assert(contents.includes("package/dist/db/sst-files.js"));
+  assert(contents.includes("package/dist/db/read-view.js"));
+  assert(contents.includes("package/dist/db/scan-packet.js"));
+  assert(contents.includes("package/dist/db/wasm-init.js"));
   assert(contents.includes("package/wasm/hoke_wasm.js"));
   assert(contents.includes("package/wasm/hoke_wasm_bg.wasm"));
   assert(!/\.test\.|node_modules\/|package\/src\//.test(contents), "Unexpected files in tarball");
