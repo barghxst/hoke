@@ -219,3 +219,11 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 `tests/browser/sst-files.spec.ts` добавляет4 настоящих OPFS Worker cases: чтение после reopen, preflight без создания файлов, collision/corrupt-open без переписывания и освобождение handle после failed flush с сохранением orphan name. Полный browser suite —54 scenarios. Код файлового слоя внутренний, отдельного пользовательского UI пока нет.
 
 Проверки выполняются после интеграции цельного среза: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all`. Эти сценарии не подтверждают root publication, browser-process crash или power-loss safety. Контракт и ограничения — [ADR0015](adr/0015-sst-wasm-files.md).
+
+## 19. Потоковое объединение SST (C5b)
+
+После реализации и интеграции выполнены9 Rust merge cases (`cargo test -p hoke-core --test sst_merge`),6 новых actual-WASM cases и9 новых OPFS browser cases. Общие результаты:205 Rust,34 WASM,63 Chrome;252 JS и11 Python остаются зелёными. Native тесты проверяют источник без mutations, winning read failure, output write failures, cap64 и deterministic model.
+
+Actual-WASM дополнительно проверяет output больше32MiB/1000 записей, сохранение источников, metadata corruption до destination calls и winning payload CRC во время streaming. Browser cases проверяют reopen/ordering/tombstones, preflight без I/O, missing/locked sources без candidate, corrupt source с пустым orphan, close/flush failures и create с неизвестным исходом. Полные команды остаются `pnpm check:all` или последовательностью `pnpm check:js`, `pnpm check:rust`, `pnpm test:bench`, `HOKE_BROWSER_CHANNEL=chrome pnpm test:browser`.
+
+Слияние ещё не переключает openDB active state, поэтому нельзя проверять его кнопкой compaction в текущем демо. Это внутренний файловый примитив по [ADR0016](adr/0016-sst-merge-candidates.md), не доказательство root publication или power-loss safety.

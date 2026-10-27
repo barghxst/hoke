@@ -21,15 +21,15 @@
 
 ## Последняя общая проверка
 
-C5a: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции SST codec/WASM/OPFS file layer:
+C5b: проверки состава check:all прошли после интеграции streaming SST merge. Начальный прогон остановился на rustfmt нового Rust-теста; после форматирования JS/WASM/tarball проверки уже были зелёными, Rust/Python/browser выполнены до конца отдельной последовательностью:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
 - 252 JS tests в10 файлах, включая13 registry и121 DB client/collection cases;
-- 28 actual-WASM tests,196 Rust tests,11 Python benchmark tests;
+- 34 actual-WASM tests,205 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 54 настоящих Chrome155/Linux browser tests:41 OPFS/WASM/SST +4 OPFS demo +9 KV demo.
+- 63 настоящих Chrome155/Linux browser tests:50 OPFS/WASM/SST +4 OPFS demo +9 KV demo.
 
-SST v1/WAL v1 и Worker protocol2 не менялись; Rust SST visibility и WASM binding расширены в C5a. MSRV1.89.0 с196 Rust tests ранее проверен в C2; повторный MSRV прогон для C5a не выполнялся. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
+SST v1/WAL v1 и Worker protocol2 не менялись; Rust/WASM/OPFS merge добавлен в C5b. MSRV1.89.0 с196 Rust tests ранее проверен в C2; повторный MSRV прогон для C5a/C5b не выполнялся. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -270,3 +270,13 @@ C3 не завершает C: browser SST publication/compaction, atomic batch �
 - [x] ADR0015 описывает реализацию; package exports и openDB не расширялись. Подготовленные файлы не объявляются commit; WAL/memtable не удаляются и не переключаются.
 
 По уточнению пользователя сначала реализуем связный код базы, затем проводим интеграционную проверку; отдельный publication simulator отложен. Следующая граница — authoritative publication SST/compaction по предложенному ADR0014, где выбор нового durable container ещё не принят. Этот срез не подменяет это решение и не завершает C. Packet cap не ограничивает heap; scan может декодировать одну выбранную запись до обнаружения переполнения бюджета. Browser batch и DB migrations пока отсутствуют.
+
+## C5b: потоковая compaction в отдельный SST-кандидат
+
+- [x] Rust merge_tables с fan-in64: старые источники первыми, новые последними; winner только один на ключ, tombstones остаются, shadowed values не читаются. Fixed cursors и TableWriter без материализации всех values.
+- [x] WasmSst.merge открывает метаданные всех источников до destination I/O, создаёт и flush синхронизирует output, оставляет JS handle ownership вызывающему коду. Результат может превышать transfer cap32MiB/scan limit1000; SST caps остаются.
+- [x] OPFS mergeSstCandidates: preflight names/copy/count/duplicates, исключительные источники до создания candidate, освобождение input/output handles при ошибке, selected candidateName при неизвестном исходе create. Source bytes не меняются и файлы не удаляются.
+- [x] 9 Rust,6 actual-WASM и9 настоящих OPFS cases добавлены после реализации; состав проверок зелёный:252 JS +205 Rust +34 WASM +11 Python +63 Chrome. Внешний CI не запускался.
+- [x] ADR0016 фиксирует newest-wins/tombstone/order/lifetime и partial-compaction границы. Durable формат и публичный hoke/db API не менялись; native Database использует прежнюю полную compaction.
+
+Это файловая часть compaction, без authoritative publication. Полный output после flush может остаться orphan при потере результата или cleanup failure, и это не основание удалять sources. Lazy CRC проверяет только выбранные payload; merge не является полным scrub. Следующий шаг с переключением root всё ещё требует выбора по ADR0014. Код оформляется отдельными локальными коммитами пользователя, без assistant attribution и push.

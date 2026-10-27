@@ -175,3 +175,9 @@ Listeners снимаются также при error ACK, timeout, transport/pro
 В ядре и WASM реализованы чтение/построение существующих SST v1; внутренний файловый слой `packages/hoke/src/db/sst-files.ts` создаёт кандидатов и открывает их через OPFS sync handles. Он сохраняет tombstones, различает пустые значения и missing, поддерживает bounded scan и освобождает handles при close/ошибке. Файлы совместимы с native codec, новый durable format не введён.
 
 Это подготовка файловой части, а не переключение openDB на SST. WAL остаётся источником истины; flush/compaction/batch в браузерном API ещё не подключены. Публикация кандидатов и reclamation требуют отдельного решения. Контракт — [ADR0015](adr/0015-sst-wasm-files.md), варианты commit — [ADR0014](adr/0014-opfs-multifile-publication-proposal.md).
+
+## Объединение SST-кандидатов (C5b)
+
+Внутренний mergeSstCandidates(directory,names) объединяет до64 SST в новый файл: имена передаются от старых данных к новым, последнее значение ключа побеждает, tombstones сохраняются. Файлы-источники остаются неизменными. Rust merge читает выбранные values по одной записи; итоговый файл может превышать32MiB и1000 записей, scan сохраняет свои прежние пределы.
+
+Это файловая часть compaction, пока без изменения active state openDB. Успех означает подготовленный file candidate, а не пользовательский commit или разрешение удалить источники. [ADR0016](adr/0016-sst-merge-candidates.md) описывает ordering, владение handles, ошибки и lazy CRC.

@@ -4,6 +4,8 @@
 
 - Подготовлен SST file bridge: существующий Rust SST v1 codec доступен WASM и внутреннему OPFS слою, с tombstones, bounded reads и cleanup. Browser openDB пока WAL-only; публикация SST не включена.
 
+- Добавлено потоковое объединение SST-кандидатов через Rust/WASM/OPFS: newest wins, tombstones сохранены, исходники не удаляются; authoritative publication ещё не включена.
+
 ### JavaScript package
 
 - Synchronous KV with memory and explicit localStorage adapters.

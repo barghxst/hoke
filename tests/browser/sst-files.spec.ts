@@ -7,7 +7,7 @@ async function inWorker(page: Page, body: string): Promise<unknown> {
     const url = URL.createObjectURL(
       new Blob(
         [
-          `import { createSstCandidate, openSstFile, SstFileError } from ${JSON.stringify(`${location.origin}/packages/hoke/dist/db/sst-files.js`)};
+          `import { createSstCandidate, mergeSstCandidates, openSstFile, SstFileError } from ${JSON.stringify(`${location.origin}/packages/hoke/dist/db/sst-files.js`)};
       const bytes = (...values) => new Uint8Array(values);
       const root = await navigator.storage.getDirectory();
       const name = 'sst-test-' + crypto.randomUUID();
@@ -193,4 +193,274 @@ test("failed candidate flush reports the orphan name and releases the exclusive 
   `,
     ),
   ).toEqual({ typed: true, named: true, retained: true });
+});
+
+test("SST merge uses newest versions, preserves tombstones and leaves sources immutable", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const older = await createSstCandidate(directory, [
+      {key: bytes(), value: bytes(1)}, {key: bytes(0), value: bytes(2)},
+      {key: bytes(1), value: null}, {key: bytes(255), value: bytes(3)},
+    ]);
+    const olderName = older.name; older.close();
+    const newer = await createSstCandidate(directory, [
+      {key: bytes(), value: null}, {key: bytes(0), value: bytes()},
+      {key: bytes(1), value: bytes(4)},
+    ]);
+    const newerName = newer.name; newer.close();
+    const before = await Promise.all([read(olderName), read(newerName)]);
+    const names = [olderName, newerName];
+    const pending = mergeSstCandidates(directory, names);
+    names.reverse();
+    const merged = await pending;
+    const name = merged.name;
+    const rows = compact(merged.scan());
+    merged.close();
+    const reopened = await openSstFile(directory, name);
+    const restored = compact(reopened.scan()); reopened.close();
+    const after = await Promise.all([read(olderName), read(newerName)]);
+    // Reacquisition also proves that merge released both exclusive input handles.
+    for (const source of [olderName, newerName]) {
+      const opened = await openSstFile(directory, source); opened.close();
+    }
+    return {rows, restored, unchanged: JSON.stringify(before) === JSON.stringify(after), fresh: !names.includes(name)};
+  `,
+    ),
+  ).toEqual({
+    rows: [
+      [[], null],
+      [[0], []],
+      [[1], [4]],
+      [[255], [3]],
+    ],
+    restored: [
+      [[], null],
+      [[0], []],
+      [[1], [4]],
+      [[255], [3]],
+    ],
+    unchanged: true,
+    fresh: true,
+  });
+});
+
+test("SST merge validates names, duplicates and count before directory access", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    let accesses = 0;
+    const forbidden = {getFileHandle() { accesses++; throw new Error('Unexpected I/O'); }};
+    const invalid = [['../a.sst'], ['a.wal'], ['a.sst', 'a.sst'], Array(65).fill('a.sst'), [null], 'a.sst'];
+    const errors = [];
+    for (const names of invalid) {
+      try { await mergeSstCandidates(forbidden, names); errors.push('ACK'); }
+      catch (error) { errors.push(error.name); }
+    }
+    return {accesses, errors};
+  `,
+    ),
+  ).toEqual({ accesses: 0, errors: Array(6).fill("TypeError") });
+});
+
+test("empty SST merge builds an empty reusable candidate", async ({ page }) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const merged = await mergeSstCandidates(directory, []);
+    const name = merged.name;
+    const empty = merged.scan().length === 0 && merged.lookup(bytes()) === undefined;
+    merged.close();
+    const reopened = await openSstFile(directory, name);
+    const restored = reopened.scan().length; reopened.close();
+    return {empty, restored};
+  `,
+    ),
+  ).toEqual({ empty: true, restored: 0 });
+});
+
+test("missing and locked merge sources create no candidate and release earlier inputs", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const first = await createSstCandidate(directory, []);
+    const firstName = first.name; first.close();
+    const second = await createSstCandidate(directory, []);
+    const secondName = second.name;
+    let created = 0;
+    const watched = {getFileHandle(name, options) {
+      if (options.create) created++;
+      return directory.getFileHandle(name, options);
+    }};
+    const failures = [];
+    for (const names of [[firstName, 'missing.sst'], [firstName, secondName]]) {
+      try { await mergeSstCandidates(watched, names); failures.push('ACK'); }
+      catch(error) { failures.push(error instanceof SstFileError && error.candidateName === undefined); }
+      const released = await openSstFile(directory, firstName); released.close();
+    }
+    second.close();
+    return {created, failures};
+  `,
+    ),
+  ).toEqual({ created: 0, failures: [true, true] });
+});
+
+test("corrupt SST merge reports an empty orphan and never changes either source", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const valid = await createSstCandidate(directory, [{key: bytes(1), value: bytes(2)}]);
+    const validName = valid.name; valid.close();
+    const broken = await directory.getFileHandle('broken.sst', {create: true});
+    const writer = await broken.createSyncAccessHandle(); writer.write(bytes(1,2,3)); writer.flush(); writer.close();
+    const before = await Promise.all([read(validName), read('broken.sst')]);
+    let orphan;
+    try { await mergeSstCandidates(directory, [validName, 'broken.sst']); }
+    catch(error) { if (!(error instanceof SstFileError)) throw error; orphan = error.candidateName; }
+    if (!orphan) throw new Error('Missing merge orphan name');
+    const destination = await (await directory.getFileHandle(orphan)).createSyncAccessHandle();
+    const size = destination.getSize(); destination.close();
+    for (const source of [validName, 'broken.sst']) {
+      const handle = await (await directory.getFileHandle(source)).createSyncAccessHandle(); handle.close();
+    }
+    const after = await Promise.all([read(validName), read('broken.sst')]);
+    return {size, unchanged: JSON.stringify(before) === JSON.stringify(after)};
+  `,
+    ),
+  ).toEqual({ size: 0, unchanged: true });
+});
+
+test("merge source close failure rejects, releases output and preserves the first failure", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const source = await createSstCandidate(directory, [{key: bytes(1), value: bytes(2)}]);
+    const sourceName = source.name; source.close();
+    const injected = new Error('source close failed');
+    const failing = {async getFileHandle(name, options) {
+      const file = await directory.getFileHandle(name, options);
+      return {async createSyncAccessHandle() {
+        const handle = await file.createSyncAccessHandle();
+        return {
+          getSize: () => handle.getSize(), read: (buffer, options) => handle.read(buffer, options),
+          write: (buffer, options) => handle.write(buffer, options), truncate: size => handle.truncate(size),
+          flush: () => handle.flush(), close: () => {handle.close(); if (name === sourceName) throw injected;},
+        };
+      }};
+    }};
+    let orphan, preserved = false;
+    try { await mergeSstCandidates(failing, [sourceName]); }
+    catch(error) { orphan = error.candidateName; preserved = error.cause === injected; }
+    if (!orphan) throw new Error('Missing merge candidate name');
+    const result = await openSstFile(directory, orphan);
+    const value = Array.from(result.lookup(bytes(1))); result.close();
+    const reopened = await openSstFile(directory, sourceName); reopened.close();
+    return {preserved, value};
+  `,
+    ),
+  ).toEqual({ preserved: true, value: [2] });
+});
+
+test("SST merge streams more than the scan row limit", async ({ page }) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const names = [];
+    for (let group = 0; group < 2; group++) {
+      const source = await createSstCandidate(directory, Array.from({length: 700}, (_, i) => {
+        const number = group * 700 + i;
+        return {key: bytes(number >> 8, number & 255), value: bytes(group)};
+      }));
+      names.push(source.name); source.close();
+    }
+    const result = await mergeSstCandidates(directory, names);
+    const first = result.scan({limit: 1000}).length;
+    const last = Array.from(result.lookup(bytes(1399 >> 8, 1399 & 255)));
+    const tail = result.scan({start: {key: bytes(1000 >> 8, 1000 & 255), inclusive: true}, limit: 1000}).length;
+    result.close();
+    return {first, tail, last};
+  `,
+    ),
+  ).toEqual({ first: 1000, tail: 400, last: [1] });
+});
+
+test("merge flush failure retains named orphan and releases every exclusive handle", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const source = await createSstCandidate(directory, [{key: bytes(1), value: bytes(2)}]);
+    const sourceName = source.name; source.close();
+    const injected = new Error('merge flush failed');
+    const failing = {async getFileHandle(name, options) {
+      const file = await directory.getFileHandle(name, options);
+      return {async createSyncAccessHandle() {
+        const handle = await file.createSyncAccessHandle();
+        return {
+          getSize: () => handle.getSize(), read: (buffer, options) => handle.read(buffer, options),
+          write: (buffer, options) => handle.write(buffer, options), truncate: size => handle.truncate(size),
+          flush: () => {if (name !== sourceName) throw injected; handle.flush();}, close: () => handle.close(),
+        };
+      }};
+    }};
+    let orphan, rejected = false;
+    try { await mergeSstCandidates(failing, [sourceName]); }
+    catch(error) { orphan = error.candidateName; rejected = error instanceof SstFileError; }
+    if (!orphan) throw new Error('Missing merge orphan name');
+    for (const name of [sourceName, orphan]) {
+      const handle = await (await directory.getFileHandle(name)).createSyncAccessHandle(); handle.close();
+    }
+    const reopened = await openSstFile(directory, sourceName);
+    const value = Array.from(reopened.lookup(bytes(1))); reopened.close();
+    return {rejected, value};
+  `,
+    ),
+  ).toEqual({ rejected: true, value: [2] });
+});
+
+test("candidate creation with an unknown outcome reports its name and releases merge inputs", async ({
+  page,
+}) => {
+  expect(
+    await inWorker(
+      page,
+      `
+    const source = await createSstCandidate(directory, [{key: bytes(1), value: bytes(2)}]);
+    const sourceName = source.name; source.close();
+    const injected = new Error('create reply failed');
+    const failing = {async getFileHandle(name, options) {
+      const file = await directory.getFileHandle(name, options);
+      if (options.create) throw injected;
+      return file;
+    }};
+    let orphan, preserved = false;
+    try { await mergeSstCandidates(failing, [sourceName]); }
+    catch(error) { orphan = error.candidateName; preserved = error.cause === injected; }
+    if (!orphan) throw new Error('Missing uncertain candidate name');
+    const handle = await (await directory.getFileHandle(orphan, {create: false})).createSyncAccessHandle();
+    const size = handle.getSize(); handle.close();
+    const reopened = await openSstFile(directory, sourceName); reopened.close();
+    return {preserved, size};
+  `,
+    ),
+  ).toEqual({ preserved: true, size: 0 });
 });
