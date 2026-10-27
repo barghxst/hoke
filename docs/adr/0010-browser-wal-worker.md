@@ -41,3 +41,5 @@ Build: wasm32-unknown-unknown + точная пара wasm-bindgen crate/CLI0.2.
 - [OPFS sync handles в Dedicated Worker и исключительная блокировка](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemFileHandle/createSyncAccessHandle).
 - [OPFS flush](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemSyncAccessHandle/flush).
 - [wasm-bindgen catch для JS imports](https://wasm-bindgen.github.io/wasm-bindgen/reference/attributes/on-js-imports/catch.html).
+
+Дополнение C2: scan/byte collections и protocol2 добавлены в ADR0011. Описанные выше version1 и отсутствие scan относятся к исходному C1; durable WAL остаётся version1.

@@ -1,6 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import type { BrowserDB, openDB } from "../../packages/hoke/src/db/index.js";
-import type { Response } from "../../packages/hoke/src/db/protocol.js";
+import { PROTOCOL_VERSION, type Response } from "../../packages/hoke/src/db/protocol.js";
 
 type Harness = {
   db: BrowserDB;
@@ -70,7 +70,7 @@ async function reopen(page: Page, name: string) {
 }
 
 async function rawWorker(page: Page) {
-  await page.evaluate(() => {
+  await page.evaluate((protocolVersion) => {
     const h = window as unknown as Harness;
     h.raw = new Worker("/packages/hoke/dist/db/worker.js", { type: "module" });
     let id = 0;
@@ -85,9 +85,9 @@ async function rawWorker(page: Page) {
           resolve(event.data);
         };
         h.raw.addEventListener("message", receive);
-        h.raw.postMessage({ version: 1, id: next, ...command });
+        h.raw.postMessage({ version: protocolVersion, id: next, ...command });
       });
-  });
+  }, PROTOCOL_VERSION);
 }
 
 async function fault(page: Page, script: string) {
@@ -481,7 +481,7 @@ test("response transport failure releases the OPFS owner and preserves an unknow
   await prepare(page);
   await rawWorker(page);
   expect(
-    await page.evaluate(async () => {
+    await page.evaluate(async (protocolVersion) => {
       const h = window as unknown as Harness;
       const opened = await h.request({ op: "open", name: "transport-fail" });
       const failure = await new Promise<string>((resolve, reject) => {
@@ -497,7 +497,7 @@ test("response transport failure releases the OPFS owner and preserves an unknow
         );
         // No response can reach the caller: both the success and error transport fail.
         h.raw.postMessage({
-          version: 1,
+          version: protocolVersion,
           id: 2,
           op: "put",
           key: new Uint8Array([1]),
@@ -505,7 +505,7 @@ test("response transport failure releases the OPFS owner and preserves an unknow
         });
       });
       return { opened: opened.ok, failure };
-    }),
+    }, PROTOCOL_VERSION),
   ).toEqual({
     opened: true,
     failure: expect.stringContaining("injected response transport failure"),

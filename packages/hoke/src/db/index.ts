@@ -1,3 +1,17 @@
+import { createCollection, type DBCollection } from "./collection.js";
+import {
+  compareBytes,
+  type DBEntry,
+  type DBScanOptions,
+  MAX_SCAN_BYTES,
+  MAX_SCAN_LIMIT,
+  type NormalizedScanOptions,
+  normalizeScanOptions,
+} from "./scan.js";
+
+export type { DBCollection } from "./collection.js";
+export type { DBEntry, DBScanOptions, ScanBound } from "./scan.js";
+
 import {
   type DBErrorCode,
   MAX_KEY_BYTES,
@@ -23,6 +37,8 @@ export interface BrowserDB {
   get(key: Uint8Array): Promise<Uint8Array | undefined>;
   put(key: Uint8Array, value: Uint8Array): Promise<void>;
   delete(key: Uint8Array): Promise<void>;
+  scan(options?: DBScanOptions): Promise<DBEntry[]>;
+  collection(prefix: Uint8Array): DBCollection;
   close(): Promise<void>;
 }
 
@@ -35,9 +51,11 @@ type Command = Request extends infer R
     ? Omit<R, "version" | "id">
     : never
   : never;
+type Result = Uint8Array | DBEntry[] | null;
 type Pending = {
+  scanOptions?: NormalizedScanOptions;
   op: Request["op"];
-  resolve: (value: Uint8Array | null) => void;
+  resolve: (value: Result) => void;
   reject: (error: DBError) => void;
   timer: ReturnType<typeof setTimeout>;
 };
@@ -62,6 +80,60 @@ function copyBytes(value: Uint8Array, maximum: number): Uint8Array {
   } catch {
     throw new DBError("INVALID_ARGUMENT", "Cannot read detached byte array");
   }
+}
+
+function decodeScan(value: unknown, options: NormalizedScanOptions): DBEntry[] {
+  if (!(value instanceof Uint8Array) || value.byteLength < 4 || value.byteLength > MAX_SCAN_BYTES) {
+    throw new Error("Invalid scan packet");
+  }
+  const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+  const count = view.getUint32(0, true);
+  if (count > MAX_SCAN_LIMIT || count > options.limit) throw new Error("Invalid scan count");
+  let offset = 4;
+  const entries: DBEntry[] = [];
+  for (let index = 0; index < count; index++) {
+    if (offset + 8 > value.byteLength) throw new Error("Truncated scan packet");
+    const keyLength = view.getUint32(offset, true);
+    const valueLength = view.getUint32(offset + 4, true);
+    offset += 8;
+    if (
+      keyLength > MAX_KEY_BYTES ||
+      valueLength > MAX_VALUE_BYTES ||
+      offset + keyLength + valueLength > value.byteLength
+    )
+      throw new Error("Invalid scan lengths");
+    const key = value.slice(offset, offset + keyLength);
+    offset += keyLength;
+    const entryValue = value.slice(offset, offset + valueLength);
+    offset += valueLength;
+    const previous = entries.at(-1);
+    if (
+      previous &&
+      (options.reverse
+        ? compareBytes(previous.key, key) <= 0
+        : compareBytes(previous.key, key) >= 0)
+    )
+      throw new Error("Invalid scan order");
+    if (options.start) {
+      const comparison = compareBytes(key, options.start.key);
+      if (comparison < 0 || (comparison === 0 && !options.start.inclusive))
+        throw new Error("Scan below start");
+    }
+    if (options.end) {
+      const comparison = compareBytes(key, options.end.key);
+      if (comparison > 0 || (comparison === 0 && !options.end.inclusive))
+        throw new Error("Scan above end");
+    }
+    if (
+      options.prefix &&
+      (key.length < options.prefix.length ||
+        options.prefix.some((byte, index) => key[index] !== byte))
+    )
+      throw new Error("Scan outside prefix");
+    entries.push({ key, value: entryValue });
+  }
+  if (offset !== value.byteLength) throw new Error("Trailing scan bytes");
+  return entries;
 }
 
 class Client implements BrowserDB {
@@ -100,7 +172,12 @@ class Client implements BrowserDB {
 
   async get(key: Uint8Array): Promise<Uint8Array | undefined> {
     this.assertOpen();
-    return (await this.request({ op: "get", key: copyBytes(key, MAX_KEY_BYTES) })) ?? undefined;
+    return (
+      ((await this.request({
+        op: "get",
+        key: copyBytes(key, MAX_KEY_BYTES),
+      })) as Uint8Array | null) ?? undefined
+    );
   }
 
   async put(key: Uint8Array, value: Uint8Array): Promise<void> {
@@ -115,6 +192,22 @@ class Client implements BrowserDB {
   async delete(key: Uint8Array): Promise<void> {
     this.assertOpen();
     await this.request({ op: "delete", key: copyBytes(key, MAX_KEY_BYTES) });
+  }
+
+  async scan(options?: DBScanOptions): Promise<DBEntry[]> {
+    this.assertOpen();
+    let normalized: NormalizedScanOptions;
+    try {
+      normalized = normalizeScanOptions(options);
+    } catch {
+      throw new DBError("INVALID_ARGUMENT", "Invalid scan options");
+    }
+    return (await this.request({ op: "scan", options: normalized })) as DBEntry[];
+  }
+
+  collection(prefix: Uint8Array): DBCollection {
+    this.assertOpen();
+    return createCollection(this, prefix);
   }
 
   close(): Promise<void> {
@@ -147,7 +240,7 @@ class Client implements BrowserDB {
     this.pending.clear();
   }
 
-  private request(command: Command): Promise<Uint8Array | null> {
+  private request(command: Command): Promise<Result> {
     if (this.state === "closed") return Promise.reject(new DBError("CLOSED", "Database is closed"));
     if (!Number.isSafeInteger(this.nextId)) {
       const error = new DBError("PROTOCOL", "Database request identifiers exhausted");
@@ -161,7 +254,13 @@ class Client implements BrowserDB {
           new DBError("TIMEOUT", "Database request timed out; mutation outcome may be unknown"),
         );
       }, this.timeoutMs);
-      this.pending.set(id, { op: command.op, resolve, reject, timer });
+      this.pending.set(id, {
+        op: command.op,
+        resolve,
+        reject,
+        timer,
+        ...(command.op === "scan" ? { scanOptions: command.options } : {}),
+      });
       try {
         this.worker.postMessage({ ...command, version: PROTOCOL_VERSION, id });
       } catch {
@@ -196,22 +295,28 @@ class Client implements BrowserDB {
       return;
     }
     if (response.ok) {
-      if (
-        response.result !== null &&
-        !(
+      let result: Result;
+      try {
+        if (pending.op === "scan" && pending.scanOptions) {
+          result = decodeScan(response.result, pending.scanOptions);
+        } else if (response.result === null) {
+          result = null;
+        } else if (
           pending.op === "get" &&
           response.result instanceof Uint8Array &&
           response.result.byteLength <= MAX_VALUE_BYTES
-        )
-      ) {
+        ) {
+          result = new Uint8Array(response.result);
+        } else {
+          throw new Error("Invalid response result");
+        }
+      } catch {
         invalid();
         return;
       }
       clearTimeout(pending.timer);
       this.pending.delete(response.id);
-      pending.resolve(
-        response.result instanceof Uint8Array ? new Uint8Array(response.result) : null,
-      );
+      pending.resolve(result);
     } else {
       const error = response.error;
       if (typeof error !== "object" || error === null) {

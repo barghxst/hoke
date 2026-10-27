@@ -44,3 +44,11 @@ Publication is pending: license, npm/GitHub ownership and final version/metadata
 - Browser reload/recovery/lock/corruption/quota-style fault tests and a runnable OPFS demo.
 - Generated JS/WASM included in tarball; KV/React imports stay independent of browser globals and WASM initialization.
 - No browser SST/scan/compaction/batch yet; full stage C remains incomplete.
+
+### Browser scans and byte collections (C2)
+
+- Bounded Rust WAL scans using native byte bounds/prefix/reverse/tombstone semantics, without storage I/O or full-map copies.
+- BrowserDB.scan with100 default/1000 maximum rows and32MiB packet budget; explicit errors without partial results or poisoned state.
+- Strict client packet/order/range validation and Worker protocol2, retaining durable WAL v1.
+- Byte collections with versioned length-prefixed namespaces, relative scan keys and shared DB lifecycle.
+- OPFS demo list controls and native/WASM/client/Chrome model, budget, protocol and reload coverage.

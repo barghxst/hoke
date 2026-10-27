@@ -8,6 +8,7 @@ import {
   type Response,
   validName,
 } from "./protocol.js";
+import { MAX_SCAN_BYTES, normalizeScanOptions } from "./scan.js";
 
 interface SyncHandle {
   getSize(): number;
@@ -84,6 +85,15 @@ function validate(data: unknown): Request {
       (!(request.value instanceof Uint8Array) || request.value.byteLength > MAX_VALUE_BYTES)
     ) {
       throw new WorkerError("INVALID_ARGUMENT", "Value must be bytes within the value size limit.");
+    }
+  } else if (request.op === "scan") {
+    try {
+      return { ...request, options: normalizeScanOptions(request.options) } as Request;
+    } catch (error) {
+      throw new WorkerError(
+        "INVALID_ARGUMENT",
+        error instanceof Error ? error.message : "Invalid scan options",
+      );
     }
   } else if (request.op !== "close") {
     throw new WorkerError("PROTOCOL", "Unknown database operation.");
@@ -190,6 +200,16 @@ async function execute(request: Request): Promise<Uint8Array | null> {
     case "delete":
       engine.delete(request.key);
       return null;
+    case "scan": {
+      const { start, end, prefix, reverse, limit } = request.options;
+      const flags =
+        (start && !start.inclusive ? 1 : 0) | (end?.inclusive ? 2 : 0) | (reverse ? 4 : 0);
+      const result = engine.scan(start?.key, end?.key, prefix, flags, limit);
+      if (result.byteLength > MAX_SCAN_BYTES) {
+        throw new WorkerError("ENGINE", "Scan response exceeds the byte budget");
+      }
+      return result;
+    }
   }
 }
 

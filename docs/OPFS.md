@@ -1,6 +1,6 @@
 # Экспериментальный Rust/WASM WAL в браузере
 
-C1 переносит существующий WAL-only Rust Engine в Dedicated Worker с настоящим OPFS. Это отдельный backend hoke/db; KV/localStorage и React entry points не загружают WASM при импорте. Native Database с SST/manifest/compaction остаётся отдельным Rust API.
+C1/C2 переносят существующий WAL-only Rust Engine в Dedicated Worker с настоящим OPFS. Это отдельный backend hoke/db; KV/localStorage и React entry points не загружают WASM при импорте. Native Database с SST/manifest/compaction остаётся отдельным Rust API.
 
 ## Подготовка
 
@@ -36,7 +36,7 @@ try {
 }
 ```
 
-mode равен wal-v1. Все методы асинхронны, близкие запросы последовательно выполняются Worker. close идемпотентен. Имя: 1–64 ASCII символа, первый буква/цифра, далее буквы/цифры/_/-. Оно отображается в OPFS/hoke-wal-v1/<name>.wal. Ключи до64KiB, значения до16MiB; пустые и бинарные bytes разрешены. Входные и возвращаемые буферы копируются, caller buffers не detached.
+mode равен wal-v1. Методы чтения/записи асинхронны, близкие запросы последовательно выполняются Worker. close идемпотентен. Имя: 1–64 ASCII символа, первый буква/цифра, далее буквы/цифры/_/-. Оно отображается в OPFS/hoke-wal-v1/<name>.wal. Ключи до64KiB, значения до16MiB; пустые и бинарные bytes разрешены. Входные и возвращаемые буферы копируются, caller buffers не detached.
 
 Валидное имя с другим регистром не нормализуется. Origin и имя определяют хранилище; native multi-file каталоги не подключаются автоматически. Второй владелец того же файла получает LOCKED; другой name независим. Никакого readwrite-unsafe и fallback в память/localStorage.
 
@@ -58,12 +58,46 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 HOKE_BROWSER_CHANNEL=chrome pnpm check:all
 ```
 
-`test:wasm` ожидает результат `pnpm build:wasm` и выполняет 16 тестов настоящего WASM с управляемым byte adapter, short I/O и ошибками. Это не замена OPFS-тестам. Browser suite включает 15 низкоуровневых OPFS/WASM сценариев, сценарий запускаемого OPFS демо и 9 прежних KV-демо сценариев. Локально проверен Chrome155/Linux. Установка bundled Chromium и CI описаны в TESTING.md; внешний CI пока не запускался.
+`test:wasm` ожидает результат `pnpm build:wasm` и выполняет 20 тестов настоящего WASM с управляемым byte adapter, short I/O и ошибками. Это не замена OPFS-тестам. Browser suite включает 22 низкоуровневых OPFS/WASM сценария, два сценария запускаемого OPFS демо и 9 прежних KV-демо сценариев. Локально проверен Chrome155/Linux. Установка bundled Chromium и CI описаны в TESTING.md; внешний CI пока не запускался.
 
 Проверяются binary/empty/copy, delete, close/reopen/reload, exclusive ownership, namespace isolation, Worker termination после ACK, corrupt/future version с корректной CRC без переписывания, incomplete tail, ошибки read/write/flush и невозможность отправить ответ. Проверка client protocol/timeouts выполняется отдельными unit tests с fake Worker. Worker termination не равен browser-process crash или отключению питания.
 
-## Границы C1 и следующий шаг
+## Текущие границы и следующий шаг
 
-Весь WAL проигрывается в map при open, общий размер базы не ограничивается API. SST, scan/collection, compaction/GC, atomic batch, subscriptions и DB migrations в браузерном API пока отсутствуют. Не используйте этот срез для неограниченного журнала. Полный C ещё не завершён: перенос multi-file publication потребует отдельного ADR и fault tests. Multi-tab здесь означает явный отказ второму владельцу, не совместный доступ.
+Весь WAL проигрывается в map при open, общий размер базы не ограничивается API. SST, compaction/GC, atomic batch, subscriptions и DB migrations в браузерном API пока отсутствуют. Scan и байтовые коллекции добавлены в C2, см. ниже. Не используйте этот срез для неограниченного журнала. Полный C ещё не завершён: перенос multi-file publication потребует отдельного ADR и fault tests. Multi-tab здесь означает явный отказ второму владельцу, не совместный доступ.
 
 Архитектура и альтернативы — [ADR0010](adr/0010-browser-wal-worker.md). OPFS требует Dedicated Worker и secure context; источники: [sync handles](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemFileHandle/createSyncAccessHandle), [flush](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemSyncAccessHandle/flush).
+
+## C2: scan и байтовые коллекции
+
+```ts
+const rows = await db.scan({
+  start: { key: new TextEncoder().encode("user:1"), inclusive: true },
+  end: { key: new TextEncoder().encode("user:9"), inclusive: false },
+  prefix: new TextEncoder().encode("user:"),
+  reverse: true,
+  limit: 50,
+});
+// rows: { key: Uint8Array; value: Uint8Array }[]
+```
+
+Start/end всегда задаются в прямом порядке, reverse меняет только выдачу. Все фильтры пересекаются. Без опций возвращается максимум100 живых записей, limit допускает0..1000; limit0 даёт пустой результат после проверки bounds. Ключи сравниваются побайтово, prefix может быть пустым или содержать0xff. Удалённые keys не выдаются. Result arrays принадлежат caller; входные bounds/prefix копируются при вызове.
+
+Полный scan packet ограничен32MiB, включая счётчики/длины. Превышение возвращает ENGINE с сообщением о byte budget без частичной выдачи. База остаётся открытой: уменьшите limit/диапазон. Лимит результата не ограничивает общий WAL/map/RSS и не делает scan streaming.
+
+```ts
+const encode = (text: string) => new TextEncoder().encode(text);
+const users = db.collection(encode("users"));
+await users.put(encode("001"), encode("Alice"));
+const selected = await users.scan({
+  start: { key: encode("001"), inclusive: true },
+  limit: 10,
+});
+// selected[0].key === bytes("001"), без физического namespace.
+```
+
+DBCollection предоставляет get/put/delete/scan с bytes и разделяет срок жизни/ошибки своей базы. Отдельного close нет. Имя коллекции — любые bytes, включая пустые; копируется при создании. Безопасный namespace:0x01 + u32BE длина prefix + prefix. Коллекции a/ab с ключами bc/c не сливаются. Максимум prefix65531bytes; namespace+local key должен помещаться в64KiB. Collection scan использует относительные bounds/prefix и не выходит за свою коллекцию. Root db.scan показывает физические ключи всех коллекций, существующие raw keys автоматически не переносятся.
+
+Worker protocol теперь v2: старые request/response отклоняются. WAL по-прежнему v1, ранее сохранённые данные открываются без миграции. Scan читает Rust map через общий native range-код без файловых операций; это согласованное состояние на момент выполнения запроса в очереди Worker, не snapshot на момент вызова из main thread.
+
+В демо можно сохранить user:1=Alice и user:2=Bob, установить prefix user:, reverse и limit1, затем «Прочитать список». После reload данные сохраняются; после удаления user:2 выдаётся user:1. Архитектура, лимиты и key encoding — [ADR0011](adr/0011-browser-scans-collections.md).

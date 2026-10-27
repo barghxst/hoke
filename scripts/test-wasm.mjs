@@ -304,3 +304,147 @@ test("final synchronization failure still consumes the engine", () => {
 
 // Engine appends and recovery truncates. Neither API exposes arbitrary gap
 // writes/extensions; those private Storage paths are not claimed as covered.
+
+function unpackScan(packet) {
+  assert(packet instanceof Uint8Array);
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  assert(packet.length >= 4);
+  const count = view.getUint32(0, true);
+  const rows = [];
+  let offset = 4;
+  for (let row = 0; row < count; row++) {
+    assert(offset + 8 <= packet.length);
+    const keyLength = view.getUint32(offset, true);
+    const valueLength = view.getUint32(offset + 4, true);
+    offset += 8;
+    assert(offset + keyLength + valueLength <= packet.length);
+    const key = packet.slice(offset, offset + keyLength);
+    offset += keyLength;
+    const value = packet.slice(offset, offset + valueLength);
+    offset += valueLength;
+    rows.push([key, value]);
+  }
+  assert.equal(offset, packet.length, "scan packet must have no trailing bytes");
+  return rows;
+}
+
+const bytes = (...values) => Uint8Array.from(values);
+const scan = (engine, start, end, prefix, flags = 0, limit = 100) =>
+  unpackScan(engine.scan(start, end, prefix, flags, limit));
+
+test("actual WASM packed scans preserve binary order, tombstones, bounds, and recovery", () => {
+  const adapter = new ByteAdapter();
+  let engine = new WasmWal(adapter);
+  const rows = [
+    [bytes(), bytes()],
+    [bytes(0), bytes(1)],
+    [bytes(0, 255), bytes(2)],
+    [bytes(255), bytes(3)],
+    [bytes(255, 255), bytes(4)],
+  ];
+  for (const [key, value] of rows) engine.put(key, value);
+  engine.put(bytes(1), bytes(9));
+  engine.delete(bytes(1));
+  assert.deepEqual(scan(engine), rows);
+  assert.deepEqual(scan(engine, undefined, undefined, undefined, 4), [...rows].reverse());
+  assert.deepEqual(scan(engine, bytes(0), bytes(255)), rows.slice(1, 3));
+  assert.deepEqual(scan(engine, bytes(0), bytes(255), undefined, 3), rows.slice(2, 4));
+  assert.deepEqual(scan(engine, bytes(0), bytes(255), undefined, 7), rows.slice(2, 4).reverse());
+  assert.deepEqual(scan(engine, undefined, undefined, bytes(255)), rows.slice(3));
+  assert.deepEqual(scan(engine, undefined, undefined, bytes()), rows);
+  assert.deepEqual(scan(engine, bytes(), bytes(), undefined, 2), rows.slice(0, 1));
+  assert.deepEqual(scan(engine, bytes(), bytes()), []);
+  assert.deepEqual(scan(engine, bytes(), bytes(), undefined, 3), []);
+  assert.deepEqual(scan(engine, undefined, undefined, undefined, 0, 2), rows.slice(0, 2));
+  close(engine);
+  engine = new WasmWal(adapter);
+  assert.deepEqual(scan(engine), rows);
+  const copy = scan(engine);
+  copy[1][0].fill(123);
+  copy[1][1].fill(123);
+  assert.deepEqual(scan(engine), rows);
+  close(engine);
+});
+
+test("actual WASM validates scan options even with zero limit and performs no storage I/O", () => {
+  const adapter = new ByteAdapter(savedWal());
+  const engine = new WasmWal(adapter);
+  const before = adapter.bytes.slice();
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush"]) {
+    adapter[method] = () => assert.fail(`scan performed ${method}`);
+  }
+  assert.deepEqual(scan(engine), [[key, initial]]);
+  assert.deepEqual(scan(engine, undefined, undefined, undefined, 0, 0), []);
+  assert.throws(() => scan(engine, bytes(2), bytes(1), undefined, 0, 0), /range/);
+  assert.throws(() => scan(engine, undefined, undefined, undefined, 8, 0), /flags/);
+  assert.throws(() => scan(engine, undefined, undefined, undefined, 0, 1001), /1000/);
+  for (let position = 0; position < 3; position++) {
+    const args = [undefined, undefined, undefined, 0, 0];
+    args[position] = new Uint8Array(65537);
+    assert.throws(() => scan(engine, ...args), /65536/);
+  }
+  assert.deepEqual(scan(engine, undefined, undefined, new Uint8Array(65536), 0, 0), []);
+  assert.deepEqual(adapter.bytes, before);
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush"])
+    delete adapter[method];
+  engine.put(bytes(5), bytes(6));
+  close(engine);
+});
+
+class FullByteAdapter extends ByteAdapter {
+  readAt(buffer, at) {
+    const count = Math.min(buffer.length, this.bytes.length - at);
+    buffer.set(this.bytes.subarray(at, at + count));
+    return count;
+  }
+
+  writeAt(buffer, at) {
+    if (at + buffer.length > this.bytes.length) this.resize(at + buffer.length);
+    this.bytes.set(buffer, at);
+    return buffer.length;
+  }
+}
+
+test("actual WASM scan enforces 1000 rows and exact 32 MiB packet boundary", () => {
+  let adapter = new FullByteAdapter();
+  let engine = new WasmWal(adapter);
+  for (let index = 0; index < 1001; index++) {
+    engine.put(bytes(index >>> 8, index & 255), bytes());
+  }
+  assert.equal(scan(engine, undefined, undefined, undefined, 0, 1000).length, 1000);
+  close(engine);
+  adapter = new FullByteAdapter();
+  engine = new WasmWal(adapter);
+  const maximum = 16 * 1024 * 1024;
+  const value = new Uint8Array(maximum);
+  engine.put(bytes(0), value);
+  // Two one-byte keys, two length pairs and row count require 22 bytes.
+  engine.put(bytes(1), value.subarray(0, maximum - 22));
+  let packet = engine.scan(undefined, undefined, undefined, 0, 100);
+  assert.equal(packet.length, 32 * 1024 * 1024);
+  assert.equal(new DataView(packet.buffer, packet.byteOffset).getUint32(0, true), 2);
+  packet = undefined;
+  engine.put(bytes(1), value.subarray(0, maximum - 21));
+  assert.throws(() => engine.scan(undefined, undefined, undefined, 0, 100), /packet.*budget/);
+  engine.put(bytes(1), value);
+  assert.throws(() => engine.scan(undefined, undefined, undefined, 0, 100), /payload.*budget/);
+  assert.equal(scan(engine, undefined, undefined, undefined, 0, 1).length, 1);
+  engine.delete(bytes(1));
+  assert.equal(scan(engine).length, 1);
+  close(engine);
+});
+
+test("actual WASM rejects scan after close and retains confirmed scan after failed commit", () => {
+  const adapter = new ByteAdapter(savedWal());
+  const engine = new WasmWal(adapter);
+  adapter.flush = () => {
+    throw new Error("injected scan sync failure");
+  };
+  assert.throws(() => engine.put(key, changed), /injected scan sync failure/);
+  assert.deepEqual(scan(engine), [[key, initial]]);
+  assert.throws(() => engine.close(), /outcome is unknown/);
+  assert.throws(() => scan(engine), /closed/);
+  assert.throws(() => scan(engine, undefined, undefined, undefined, 0, 0), /closed/);
+  engine.close();
+  engine.free();
+});

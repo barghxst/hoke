@@ -4,9 +4,10 @@
 //! methods documented below; all exceptions are returned as engine I/O errors.
 
 use std::io;
+use std::ops::Bound;
 
-use hoke_core::Engine;
 use hoke_core::storage::Storage;
+use hoke_core::{Engine, ScanOptions};
 use wasm_bindgen::prelude::*;
 
 const MAX_JS_INTEGER: u64 = (1_u64 << 53) - 1;
@@ -192,6 +193,74 @@ impl WasmWal {
             .as_ref()
             .ok_or_else(|| binding_error("WAL engine is closed"))?;
         Ok(engine.get(key).map(<[u8]>::to_vec))
+    }
+
+    /// Packed ephemeral scan response, independent of the durable WAL format.
+    /// Flags: bit 0 excludes start, bit 1 includes end, bit 2 reverses order.
+    pub fn scan(
+        &self,
+        start: Option<Vec<u8>>,
+        end: Option<Vec<u8>>,
+        prefix: Option<Vec<u8>>,
+        flags: u8,
+        limit: u32,
+    ) -> Result<Vec<u8>, JsError> {
+        const MAX_PACKET_BYTES: usize = 32 * 1024 * 1024;
+        if flags & !7 != 0 {
+            return Err(binding_error("invalid scan flags"));
+        }
+        if limit > 1000 {
+            return Err(binding_error("scan limit exceeds 1000"));
+        }
+        if [&start, &end, &prefix]
+            .iter()
+            .any(|bound| bound.as_ref().is_some_and(|key| key.len() > 65536))
+        {
+            return Err(binding_error("scan bound or prefix exceeds 65536 bytes"));
+        }
+        let options = ScanOptions {
+            start: match start {
+                Some(key) if flags & 1 != 0 => Bound::Excluded(key),
+                Some(key) => Bound::Included(key),
+                None => Bound::Unbounded,
+            },
+            end: match end {
+                Some(key) if flags & 2 != 0 => Bound::Included(key),
+                Some(key) => Bound::Excluded(key),
+                None => Bound::Unbounded,
+            },
+            prefix,
+            reverse: flags & 4 != 0,
+            limit: limit as usize,
+        };
+        options.validate().map_err(binding_error)?;
+        let engine = self
+            .engine
+            .as_ref()
+            .ok_or_else(|| binding_error("WAL engine is closed"))?;
+        let rows = engine
+            .scan_with_budget(options, MAX_PACKET_BYTES)
+            .map_err(binding_error)?;
+        let packet_bytes = rows.iter().try_fold(4_usize, |total, (key, value)| {
+            total
+                .checked_add(8)
+                .and_then(|size| size.checked_add(key.len()))
+                .and_then(|size| size.checked_add(value.len()))
+                .filter(|size| *size <= MAX_PACKET_BYTES)
+                .ok_or_else(|| binding_error("scan packet exceeds 32 MiB byte budget"))
+        })?;
+        let mut packet = Vec::new();
+        packet
+            .try_reserve_exact(packet_bytes)
+            .map_err(|_| binding_error("could not allocate scan packet"))?;
+        packet.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+        for (key, value) in rows {
+            packet.extend_from_slice(&(key.len() as u32).to_le_bytes());
+            packet.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            packet.extend_from_slice(&key);
+            packet.extend_from_slice(&value);
+        }
+        Ok(packet)
     }
 
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), JsError> {

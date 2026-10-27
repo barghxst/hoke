@@ -249,6 +249,33 @@ impl<S: Storage> Engine<S> {
         self.values.get(key).map(Vec::as_slice)
     }
 
+    /// Return ordered live entries with a bounded total key/value payload.
+    ///
+    /// This reads the recovered in-memory WAL state without storage I/O or
+    /// mutation. A budget error discards the entire result, including any prefix
+    /// already collected. The budget excludes allocation and cursor overhead.
+    pub fn scan_with_budget(
+        &self,
+        options: crate::ScanOptions,
+        max_bytes: usize,
+    ) -> Result<Vec<crate::KeyValue>, crate::DbError> {
+        let mut result = Vec::new();
+        let mut bytes = 0_usize;
+        crate::scan::visit_sources(self, &mut [], options, |key, value| {
+            bytes = bytes
+                .checked_add(key.len())
+                .and_then(|total| total.checked_add(value.len()))
+                .filter(|total| *total <= max_bytes)
+                .ok_or(crate::DbError::Limit("scan payload exceeds byte budget"))?;
+            result
+                .try_reserve(1)
+                .map_err(|_| crate::DbError::AllocationFailed)?;
+            result.push((key, value));
+            Ok(())
+        })?;
+        Ok(result)
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }

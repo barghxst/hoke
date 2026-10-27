@@ -188,4 +188,10 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 
 Для сборки установите `rustup target add wasm32-unknown-unknown` и `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. `pnpm build` теперь сначала генерирует wasm assets, затем JS/declarations; публикационный tarball содержит оба каталога. Это build-time требование для checkout, импорт KV/React не загружает WASM.
 
-`pnpm check:js` дополнительно запускает 16 actual-WASM adapter tests через `pnpm test:wasm`. Полный browser suite теперь также проверяет 15 OPFS/WASM scenarios и одно OPFS демо. Данные и ожидаемые исходы — [OPFS.md](OPFS.md). Browser CI устанавливает Rust target/CLI перед сборкой. Старые девять KV-демо тестов остаются отдельными сценариями.
+`pnpm check:js` дополнительно запускает 20 actual-WASM adapter tests через `pnpm test:wasm`. Полный browser suite теперь также проверяет 22 OPFS/WASM scenarios и два OPFS demo scenarios. Данные и ожидаемые исходы — [OPFS.md](OPFS.md). Browser CI устанавливает Rust target/CLI перед сборкой. Старые девять KV-демо тестов остаются отдельными сценариями.
+
+## 15. Проверить browser scan/collection (C2)
+
+Демо OPFS позволяет редактировать key/value и читать список по prefix/reverse/limit; сценарий user:1/user:2 и API коллекций описаны в [OPFS.md](OPFS.md#c2-scan-и-байтовые-коллекции). Весь browser suite: `HOKE_BROWSER_CHANNEL=chrome pnpm test:browser`. Native WAL scan отдельно: `cargo test -p hoke-core --test wal_scan`; actual WASM: `pnpm test:wasm` после сборки.
+
+Лимиты:100 строк по умолчанию, максимум1000, packet32MiB. Большая выдача возвращает явную ошибку и оставляет базу доступной. Worker protocol2 не меняет WAL v1; смешанные версии клиент/worker отвергаются. Результат имеет owned byte arrays; DBCollection выдаёт относительные ключи и разделяет lifecycle базы.

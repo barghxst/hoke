@@ -96,9 +96,20 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
-    import { openDB, type BrowserDB } from 'hoke/db';
+    import { openDB, type BrowserDB, type DBCollection, type DBEntry } from 'hoke/db';
     const pending: Promise<BrowserDB> = openDB('typed');
     void pending;
+    async function inspect(db: BrowserDB) {
+      const rows: DBEntry[] = await db.scan({ start: { key: new Uint8Array(), inclusive: true }, reverse: true, limit: 5 });
+      const collection: DBCollection = db.collection(Uint8Array.of(0, 255));
+      const relative: DBEntry[] = await collection.scan({ prefix: Uint8Array.of(1) });
+      // @ts-expect-error Bounds require an explicit inclusive boolean.
+      db.scan({ start: { key: new Uint8Array() } });
+      // @ts-expect-error Collection values are bytes.
+      collection.put(new Uint8Array(), 'invalid');
+      return rows.length + relative.length;
+    }
+    void inspect;
     const definition = defineStore({
       key: 'typed', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } =>

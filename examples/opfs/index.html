@@ -37,16 +37,30 @@
       снова откройте базу, чтобы проверить сохранение.
     </p>
     <p>
-      Это первый браузерный срез: get/put/delete, без SST, scan и atomic batch. Один владелец файла;
-      второе открытие получит LOCKED.
+      Работают get/put/delete и scan с prefix/reverse/limit. SST и atomic batch ещё впереди. Один
+      владелец файла; второе открытие получит LOCKED.
     </p>
     <button id="open" type="button">Открыть базу</button>
     <button id="close" type="button" disabled>Закрыть базу</button>
-    <p><label for="value">Значение ключа theme</label></p>
+    <p><label for="key">Ключ</label></p>
+    <input id="key" value="theme">
+    <p><label for="value">Значение</label></p>
     <input id="value" value="dark">
     <button id="put" type="button" disabled>Сохранить</button>
     <button id="get" type="button" disabled>Прочитать</button>
     <button id="delete" type="button" disabled>Удалить ключ</button>
+    <h2>Список записей</h2>
+    <p>
+      Сохраните user:1 и user:2, задайте prefix user: и прочитайте список. Порядок ключей —
+      побайтовый.
+    </p>
+    <label for="prefix">Prefix</label>
+    <input id="prefix" value="">
+    <label for="limit">Лимит</label>
+    <input id="limit" type="number" min="0" max="1000" value="100">
+    <label><input id="reverse" type="checkbox"> Обратный порядок</label>
+    <button id="scan" type="button" disabled>Прочитать список</button>
+    <pre id="entries">Список ещё не запрашивался.</pre>
     <p id="status">База закрыта.</p>
     <p id="error" role="alert"></p>
     <pre id="result">Здесь появится прочитанное значение.</pre>
@@ -60,13 +74,13 @@
     const element = (id) => document.getElementById(id);
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
-    const key = encoder.encode("theme");
+    const key = () => encoder.encode(element("key").value);
     let db;
     let busy = false;
     function controls() {
       element("open").disabled = busy || Boolean(db);
       element("close").disabled = busy || !db;
-      for (const id of ["put", "get", "delete"]) element(id).disabled = busy || !db;
+      for (const id of ["put", "get", "delete", "scan"]) element(id).disabled = busy || !db;
     }
     async function attempt(action) {
       if (busy) return;
@@ -98,21 +112,38 @@
     );
     element("put").addEventListener("click", () =>
       attempt(async () => {
-        await db.put(key, encoder.encode(element("value").value));
+        await db.put(key(), encoder.encode(element("value").value));
         element("result").textContent = "Запись подтверждена после OPFS flush.";
       }),
     );
     element("get").addEventListener("click", () =>
       attempt(async () => {
-        const value = await db.get(key);
+        const value = await db.get(key());
         element("result").textContent =
           value === undefined ? "Ключ отсутствует." : decoder.decode(value);
       }),
     );
     element("delete").addEventListener("click", () =>
       attempt(async () => {
-        await db.delete(key);
+        await db.delete(key());
         element("result").textContent = "Удаление подтверждено после OPFS flush.";
+      }),
+    );
+    element("scan").addEventListener("click", () =>
+      attempt(async () => {
+        const entries = await db.scan({
+          prefix: encoder.encode(element("prefix").value),
+          reverse: element("reverse").checked,
+          limit: Number(element("limit").value),
+        });
+        element("entries").textContent = JSON.stringify(
+          entries.map(({ key, value }) => ({
+            key: decoder.decode(key),
+            value: decoder.decode(value),
+          })),
+          null,
+          2,
+        );
       }),
     );
     </script>

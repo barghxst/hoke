@@ -21,17 +21,17 @@
 
 ## Последняя общая проверка
 
-C1: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции Rust/WASM/Worker/OPFS; после добавления ещё трёх browser cases повторены typecheck и полный browser suite:
+C2: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции scan/collections и обновления демо:
 
-- Biome, TypeScript build/typecheck, installed tarball KV/React/DB + JS/WASM assets;
-- 159 JS tests в 8 файлах (включая 41 DB client/protocol/lifecycle case);
-- 16 actual-WASM adapter tests в Node;
-- rustfmt, строгий Clippy, 192 Rust tests;
+- Biome, TypeScript build/typecheck, установленный tarball и declarations без DOM/React для DB-потребителя;
+- 195 JS tests в9 файлах, включая77 DB client/collection cases;
+- 20 тестов настоящего Rust/WASM в Node;
+- rustfmt, Clippy с -D warnings,196 Rust tests;
 - 11 Python benchmark tests;
-- 25 настоящих Chrome155/Linux browser tests: 15 OPFS/WASM +1 OPFS demo +9 KV demo;
-- отдельно 192 Rust tests на MSRV1.89.0/Linux, WASM release build на wasm32-unknown-unknown.
+- 33 настоящих Chrome155/Linux browser tests:22 OPFS/WASM +2 OPFS demo +9 KV demo;
+- отдельно196 Rust tests на MSRV1.89.0/Linux, release wasm32 build.
 
-CI подготовлен для генерации WASM и установки браузера; внешнего запуска CI пока не было. Firefox/WebKit, Windows/macOS и физическая потеря питания не проверялись.
+CI подготовлен, внешнего запуска CI пока не было. Другие браузеры/ОС и физическая потеря питания не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -222,3 +222,17 @@ CI подготовлен для генерации WASM и установки �
 - [x] Полная проверка прошла; итоговые количества приведены выше. Никакой публикации не было.
 
 Запуск: pnpm demo → /examples/opfs/. Подготовка, API и ограничения — OPFS.md. Tested Chrome155/Linux. C1 не является завершением C: пока отсутствуют browser SST/compaction, scan/collection, atomic batch, subscriptions и DB migrations. Весь WAL хранится/проигрывается целиком; общий размер не ограничен API, mode экспериментальный. Timeout/lost reply может означать commit без ACK; автоматического повтора нет. Worker termination не моделирует потерю питания или browser-process crash.
+
+## C2: ограниченные browser scans и байтовые коллекции
+
+- [x] ADR0011: общий native Rust range/merge код для WAL map без I/O/копирования всей базы. Engine::scan_with_budget ограничивает key/value payload; WasmWal.scan дополнительно ограничивает полный packet.
+- [x] BrowserDB.scan со start/end {key,inclusive}, prefix, reverse и limit0..1000 (default100). Результат максимум32MiB с заголовками; ошибки без частичной выдачи, файловых операций и poison.
+- [x] Worker protocol2 с отклонением старых request/response, WAL остаётся v1. Client проверяет framing/lengths/limit/order/unique/range/prefix и завершает сессию при неверном ответе.
+- [x] BrowserDB.collection(bytes) / DBCollection get/put/delete/scan. Namespace0x01+u32BE length+prefix устраняет неоднозначную конкатенацию, relative keys/ranges, копии и общий DB lifecycle. Предел физического key64KiB сохраняется.
+- [x] 4 native model/budget/no-I/O cases,4 новых actual-WASM cases,36 новых JS client/collection cases,7 новых real OPFS cases и один новый UI scenario prefix/reverse/limit/reload/delete. Tarball smoke проверяет новые публичные типы без DOM.
+- [x] Полный прогон:195 JS +196 Rust +20 WASM +11 Python +33 browser tests. Все196 Rust tests также прошли на1.89.0. Документация и демо обновлены.
+- [x] По просьбе пользователя начата фиксация отдельных законченных задач: переименование —64fc2cd; накопленный C1/WASM/backend/verification —90099b4. Его staged snapshot отдельно экспортирован и проверен полным check:all до commit. C2 фиксируется отдельным коммитом после проверок. Автор/committer — уже настроенный barghxst, без assistant/agent trailers/CONTRIBUTORS и без push.
+
+Сценарий: pnpm demo → /examples/opfs/; сохранить user:1=Alice,user:2=Bob, prefix user:, reverse, limit1 → user:2. После удаления user:2 → user:1; reload сохраняет результат. Форматы данных и dependencies не менялись. Collection key encoding применяется только к новым адресациям, прежние raw keys не перемещаются.
+
+Браузерный backend по-прежнему WAL-only, весь журнал/map остаётся в памяти, byte cap — предел результата, не RSS. Полный C не завершён: нужны multi-file SST publication/compaction, streaming при необходимости, atomic batch, subscriptions и DB migrations. Изменение durable publication/формата требует отдельного решения; этот C2 его не подменяет.

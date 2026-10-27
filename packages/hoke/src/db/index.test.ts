@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DBError, openDB } from "./index.js";
-import { MAX_KEY_BYTES, MAX_VALUE_BYTES, type Request } from "./protocol.js";
+import { MAX_KEY_BYTES, MAX_VALUE_BYTES, PROTOCOL_VERSION, type Request } from "./protocol.js";
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -22,14 +22,14 @@ class FakeWorker {
     this.requests.push(message);
   }
   respond(id: number, result: Uint8Array | null = null) {
-    this.message({ version: 1, id, ok: true, result });
+    this.message({ version: PROTOCOL_VERSION, id, ok: true, result });
   }
   message(data: unknown) {
     this.onmessage?.({ data } as MessageEvent<unknown>);
   }
   error(id: number, code = "STORAGE") {
     this.message({
-      version: 1,
+      version: PROTOCOL_VERSION,
       id,
       ok: false,
       error: { code, message: "storage failed" },
@@ -44,7 +44,9 @@ function latest(): FakeWorker {
 async function connected(timeoutMs = 30_000) {
   const opening = openDB("test-db", { timeoutMs });
   const worker = latest();
-  expect(worker.requests).toEqual([{ version: 1, id: 1, op: "open", name: "test-db" }]);
+  expect(worker.requests).toEqual([
+    { version: PROTOCOL_VERSION, id: 1, op: "open", name: "test-db" },
+  ]);
   worker.respond(1);
   return { db: await opening, worker };
 }
@@ -265,14 +267,14 @@ describe("browser DB connection", () => {
   it.each([
     null,
     {},
-    { version: 2, id: 2, ok: true, result: null },
-    { version: 1, id: 0, ok: true, result: null },
-    { version: 1, id: 999, ok: true, result: null },
-    { version: 1, id: 2.5, ok: true, result: null },
-    { version: 1, id: 2, ok: "yes", result: null },
-    { version: 1, id: 2, ok: true, result: "bytes" },
-    { version: 1, id: 2, ok: false, error: { code: "NOPE", message: "error" } },
-    { version: 1, id: 2, ok: false, error: { code: "STORAGE", message: 4 } },
+    { version: PROTOCOL_VERSION + 1, id: 2, ok: true, result: null },
+    { version: PROTOCOL_VERSION, id: 0, ok: true, result: null },
+    { version: PROTOCOL_VERSION, id: 999, ok: true, result: null },
+    { version: PROTOCOL_VERSION, id: 2.5, ok: true, result: null },
+    { version: PROTOCOL_VERSION, id: 2, ok: "yes", result: null },
+    { version: PROTOCOL_VERSION, id: 2, ok: true, result: "bytes" },
+    { version: PROTOCOL_VERSION, id: 2, ok: false, error: { code: "NOPE", message: "error" } },
+    { version: PROTOCOL_VERSION, id: 2, ok: false, error: { code: "STORAGE", message: 4 } },
   ])("rejects malformed response %j and poisons the connection", async (response) => {
     const { db, worker } = await connected();
     const get = db.get(new Uint8Array());
@@ -312,5 +314,192 @@ describe("browser DB connection", () => {
     await expect(closing).rejects.toMatchObject({ code: "STORAGE" });
     expect(db.close()).toBe(closing);
     expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+});
+
+function packet(entries: Array<[number[], number[]]>): Uint8Array {
+  const result = new Uint8Array(
+    4 + entries.reduce((sum, [key, value]) => sum + 8 + key.length + value.length, 0),
+  );
+  const view = new DataView(result.buffer);
+  view.setUint32(0, entries.length, true);
+  let offset = 4;
+  for (const [key, value] of entries) {
+    view.setUint32(offset, key.length, true);
+    view.setUint32(offset + 4, value.length, true);
+    offset += 8;
+    result.set(key, offset);
+    offset += key.length;
+    result.set(value, offset);
+    offset += value.length;
+  }
+  return result;
+}
+
+async function finish(db: Awaited<ReturnType<typeof openDB>>, worker: FakeWorker) {
+  const closing = db.close();
+  worker.respond(worker.requests.at(-1)?.id ?? 0);
+  await closing;
+}
+
+describe("browser scans", () => {
+  it("shares collection request IDs, operation errors and the connection lifetime", async () => {
+    const { db, worker } = await connected();
+    const collection = db.collection(new Uint8Array([7]));
+    const read = collection.get(new Uint8Array());
+    expect(worker.requests[1]).toMatchObject({
+      op: "get",
+      key: new Uint8Array([1, 0, 0, 0, 1, 7]),
+    });
+    worker.error(2);
+    await expect(read).rejects.toMatchObject({ code: "STORAGE" });
+    const scanning = collection.scan();
+    worker.respond(3, packet([[[1, 0, 0, 0, 1, 7, 8], [9]]]));
+    await expect(scanning).resolves.toEqual([
+      { key: new Uint8Array([8]), value: new Uint8Array([9]) },
+    ]);
+    const closing = db.close();
+    await expect(collection.scan()).rejects.toMatchObject({ code: "CLOSED" });
+    expect(() => db.collection(new Uint8Array())).toThrow(DBError);
+    worker.respond(4);
+    await closing;
+    await expect(collection.put(new Uint8Array(), new Uint8Array())).rejects.toMatchObject({
+      code: "CLOSED",
+    });
+    expect(worker.requests).toHaveLength(4);
+  });
+
+  it("copies bounds/prefix synchronously and decodes independent byte slices", async () => {
+    const { db, worker } = await connected();
+    const key = new Uint8Array([2]);
+    const scanning = db.scan({
+      start: { key, inclusive: true },
+      end: { key, inclusive: true },
+      prefix: key,
+      limit: 1,
+    });
+    key[0] = 8;
+    expect(worker.requests[1]).toMatchObject({
+      op: "scan",
+      options: {
+        start: { key: new Uint8Array([2]), inclusive: true },
+        end: { key: new Uint8Array([2]), inclusive: true },
+        prefix: new Uint8Array([2]),
+        reverse: false,
+        limit: 1,
+      },
+    });
+    const bytes = packet([[[2], [3]]]);
+    worker.respond(2, bytes);
+    bytes.fill(9);
+    await expect(scanning).resolves.toEqual([
+      { key: new Uint8Array([2]), value: new Uint8Array([3]) },
+    ]);
+    await finish(db, worker);
+  });
+
+  it("handles reverse order, exclusive endpoints, zero limit and empty keys", async () => {
+    const { db, worker } = await connected();
+    const scanning = db.scan({
+      reverse: true,
+      start: { key: new Uint8Array([0]), inclusive: false },
+      end: { key: new Uint8Array([3]), inclusive: false },
+    });
+    worker.respond(
+      2,
+      packet([
+        [[2], []],
+        [[1], []],
+      ]),
+    );
+    expect(await scanning).toHaveLength(2);
+    const zero = db.scan({ limit: 0 });
+    worker.respond(3, packet([]));
+    await expect(zero).resolves.toEqual([]);
+    const empty = db.scan();
+    worker.respond(4, packet([[[], []]]));
+    await expect(empty).resolves.toEqual([{ key: new Uint8Array(), value: new Uint8Array() }]);
+    await finish(db, worker);
+  });
+
+  it.each([
+    null,
+    [],
+    { limit: -1 },
+    { limit: 1001 },
+    { limit: 1.5 },
+    { limit: NaN },
+    { reverse: 1 },
+    { start: { key: new Uint8Array() } },
+    { prefix: "str" },
+    { unknown: true },
+    {
+      start: { key: new Uint8Array([2]), inclusive: true },
+      end: { key: new Uint8Array([1]), inclusive: true },
+    },
+  ])("rejects invalid scan options %j before posting", async (options) => {
+    const { db, worker } = await connected();
+    await expect(db.scan(options as Parameters<typeof db.scan>[0])).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(worker.requests).toHaveLength(1);
+    await finish(db, worker);
+  });
+
+  it.each([
+    null,
+    new Uint8Array(3),
+    new Uint8Array([1, 0, 0, 0]),
+    new Uint8Array([0, 0, 0, 0, 0]),
+    packet([
+      [[2], []],
+      [[1], []],
+    ]),
+    packet([
+      [[1], []],
+      [[1], []],
+    ]),
+    (() => {
+      const value = new Uint8Array(12);
+      const view = new DataView(value.buffer);
+      view.setUint32(0, 1, true);
+      view.setUint32(4, MAX_KEY_BYTES + 1, true);
+      return value;
+    })(),
+    (() => {
+      const value = new Uint8Array(12);
+      const view = new DataView(value.buffer);
+      view.setUint32(0, 1, true);
+      view.setUint32(8, MAX_VALUE_BYTES + 1, true);
+      return value;
+    })(),
+    new Uint8Array(32 * 1024 * 1024 + 1),
+  ])("rejects malformed scan packets and all pending requests", async (bytes) => {
+    const { db, worker } = await connected();
+    const scanning = db.scan();
+    const reading = db.get(new Uint8Array());
+    worker.respond(2, bytes);
+    await expect(scanning).rejects.toMatchObject({ code: "PROTOCOL" });
+    await expect(reading).rejects.toMatchObject({ code: "PROTOCOL" });
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { options: { limit: 0 }, entries: [[[1], []]] },
+    {
+      options: { reverse: true },
+      entries: [
+        [[1], []],
+        [[2], []],
+      ],
+    },
+    { options: { prefix: new Uint8Array([2]) }, entries: [[[1], []]] },
+    { options: { start: { key: new Uint8Array([1]), inclusive: false } }, entries: [[[1], []]] },
+    { options: { end: { key: new Uint8Array([1]), inclusive: false } }, entries: [[[1], []]] },
+  ])("rejects results outside the requested range", async ({ options, entries }) => {
+    const { db, worker } = await connected();
+    const scanning = db.scan(options);
+    worker.respond(2, packet(entries as Array<[number[], number[]]>));
+    await expect(scanning).rejects.toMatchObject({ code: "PROTOCOL" });
   });
 });

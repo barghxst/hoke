@@ -2,7 +2,7 @@
 
 Хранилище данных для веба и React Native: простой KV для настроек и будущая встроенная база на общем Rust-ядре.
 
-Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db уже работает через Rust/WASM/Worker/OPFS в режиме WAL-only (get/put/delete/close); браузерные SST/scan/batch, React Native и devtools ещё не реализованы. Пакет не опубликован.
+Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db уже работает через Rust/WASM/Worker/OPFS в режиме WAL-only (get/put/delete/scan/close и byte collections); браузерные SST/batch, React Native и devtools ещё не реализованы. Пакет не опубликован.
 
 [Подробный план](docs/PLAN.md) · [Ход работ](docs/PROGRESS.md) · [Решения по API](docs/adr/0001-store-and-react-contract.md) · [Changelog](CHANGELOG.md)
 
@@ -269,4 +269,4 @@ max_wal_bytes/--wal-limit проверяет длину журнала с нов
 
 `hoke/db` теперь предоставляет async openDB/get/put/delete/close через Dedicated Worker и существующий Rust WAL v1. Демо после `pnpm demo`: http://127.0.0.1:8000/examples/opfs/. Для сборки нужны WASM target и wasm-bindgen CLI0.2.129; команды, API и границы гарантий — [OPFS.md](docs/OPFS.md).
 
-Это WAL-only браузерный срез с одним владельцем файла. Native SST/compaction/atomic batch не включены в него автоматически; полный этап C ещё предстоит завершить.
+Это WAL-only браузерный срез с одним владельцем файла. Browser scan/collection добавлены в C2. Native SST/compaction/atomic batch не включены в него автоматически; полный этап C ещё предстоит завершить.
