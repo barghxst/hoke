@@ -1,4 +1,4 @@
-import { type BrowserDB, DBError } from "./index.js";
+import { type BrowserDB, DBError, type DBOperationOptions } from "./index.js";
 import { type DBListener, type DBRange, normalizeWatchRange } from "./notifications.js";
 import { MAX_KEY_BYTES } from "./protocol.js";
 import {
@@ -10,10 +10,10 @@ import {
 
 /** A byte-key namespace sharing its database's ownership and lifetime. */
 export interface DBCollection {
-  get(key: Uint8Array): Promise<Uint8Array | undefined>;
-  put(key: Uint8Array, value: Uint8Array): Promise<void>;
-  delete(key: Uint8Array): Promise<void>;
-  scan(options?: DBScanOptions): Promise<DBEntry[]>;
+  get(key: Uint8Array, options?: DBOperationOptions): Promise<Uint8Array | undefined>;
+  put(key: Uint8Array, value: Uint8Array, options?: DBOperationOptions): Promise<void>;
+  delete(key: Uint8Array, options?: DBOperationOptions): Promise<void>;
+  scan(options?: DBScanOptions, operationOptions?: DBOperationOptions): Promise<DBEntry[]>;
   subscribe(key: Uint8Array, listener: DBListener): () => void;
   subscribeRange(range: DBRange, listener: DBListener): () => void;
 }
@@ -48,14 +48,19 @@ export function createCollection(db: BrowserDB, prefix: Uint8Array): DBCollectio
     }
   }
   return {
-    async get(key) {
-      return db.get(physical(key));
+    async get(key, options) {
+      const translated = physical(key);
+      return options === undefined ? db.get(translated) : db.get(translated, options);
     },
-    async put(key, value) {
-      await db.put(physical(key), value);
+    async put(key, value, options) {
+      const translated = physical(key);
+      if (options === undefined) await db.put(translated, value);
+      else await db.put(translated, value, options);
     },
-    async delete(key) {
-      await db.delete(physical(key));
+    async delete(key, options) {
+      const translated = physical(key);
+      if (options === undefined) await db.delete(translated);
+      else await db.delete(translated, options);
     },
     subscribe(key, listener) {
       return db.subscribe(physical(key), listener);
@@ -77,7 +82,7 @@ export function createCollection(db: BrowserDB, prefix: Uint8Array): DBCollectio
         };
       return db.subscribeRange(translated, listener);
     },
-    async scan(options) {
+    async scan(options, operationOptions) {
       let normalized: NormalizedScanOptions;
       try {
         normalized = normalizeScanOptions(options);
@@ -96,7 +101,9 @@ export function createCollection(db: BrowserDB, prefix: Uint8Array): DBCollectio
         };
       if (normalized.end)
         translated.end = { key: physical(normalized.end.key), inclusive: normalized.end.inclusive };
-      const entries = await db.scan(translated);
+      const entries = await (operationOptions === undefined
+        ? db.scan(translated)
+        : db.scan(translated, operationOptions));
       return entries.map(({ key, value }) => ({ key: key.slice(namespace.length), value }));
     },
   };

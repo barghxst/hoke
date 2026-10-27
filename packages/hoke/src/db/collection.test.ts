@@ -279,3 +279,24 @@ describe("collection subscriptions", () => {
     expect(db.subscribe).not.toHaveBeenCalled();
   });
 });
+
+describe("collection operation options", () => {
+  it("forwards the same cancellation options for point operations and scans", async () => {
+    const { db } = database();
+    const collection = db.collection(bytes(9));
+    const options = { signal: new AbortController().signal };
+    const key = bytes(2);
+    const physical = bytes(1, 0, 0, 0, 1, 9, 2);
+    await collection.get(key, options);
+    expect(db.get).toHaveBeenLastCalledWith(physical, options);
+    await collection.put(key, bytes(3), options);
+    expect(db.put).toHaveBeenLastCalledWith(physical, bytes(3), options);
+    await collection.delete(key, options);
+    expect(db.delete).toHaveBeenLastCalledWith(physical, options);
+    await collection.scan({ prefix: key }, options);
+    expect(db.scan).toHaveBeenLastCalledWith(
+      expect.objectContaining({ prefix: physical }),
+      options,
+    );
+  });
+});

@@ -2,7 +2,7 @@
 
 Хранилище данных для веба и React Native: простой KV для настроек и будущая встроенная база на общем Rust-ядре.
 
-Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db уже работает через Rust/WASM/Worker/OPFS в режиме WAL-only (get/put/delete/scan/close и byte collections); браузерные SST/batch, React Native и devtools ещё не реализованы. Пакет не опубликован.
+Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db уже работает через Rust/WASM/Worker/OPFS в режиме WAL-only (get/put/delete/scan/close, byte collections, подписки и отмена); браузерные SST/batch, React Native и devtools ещё не реализованы. Пакет не опубликован.
 
 [Подробный план](docs/PLAN.md) · [Ход работ](docs/PROGRESS.md) · [Решения по API](docs/adr/0001-store-and-react-contract.md) · [Changelog](CHANGELOG.md)
 
@@ -193,7 +193,7 @@ cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
 
 [Решение о WAL](docs/adr/0002-native-storage-and-wal.md) · [Бинарный формат](docs/WAL_FORMAT.md) · [Rust crate](crates/hoke-core/README.md). CRC32 проверяет повреждения; неполный последний append удаляется, полная повреждённая запись вызывает ошибку без очистки файла. После I/O-ошибки записи движок требует reopen. Новые данные после ошибки могут оказаться на диске, даже если вызывающий код не получил успех.
 
-Старый WAL-only Engine по-прежнему хранит данные в памяти. Для хранения значений в SST используйте Database/режим --db ниже. Интерактивные транзакции и JS API DB ещё предстоят. Process-kill тесты не доказывают устойчивость к потере питания; платформы кроме Linux пока не проверены.
+Старый WAL-only Engine по-прежнему хранит данные в памяти. Для хранения значений в SST используйте Database/режим --db ниже. Интерактивные транзакции и JS API для native multi-file Database ещё предстоят. Process-kill тесты не доказывают устойчивость к потере питания; платформы кроме Linux пока не проверены.
 
 ## Rust: SSTable и flush
 
@@ -220,7 +220,7 @@ cargo run -q -p hoke-core -- --db /tmp/hoke-db prefix theme
 cargo run -q -p hoke-core -- --db /tmp/hoke-db range a z --reverse --limit 10
 ```
 
-Scan сливает ключи memtable и SST, учитывает новые значения и tombstones. Values читаются только для выбранных версий. Default limit 100; Rust API поддерживает Included/Excluded с обеих сторон и пересечение с prefix. CLI range — [start,end). Форматы файлов не менялись, JS DB API пока не подключён. [Сценарий проверки с ожидаемым выводом](docs/SCANS.md).
+Scan сливает ключи memtable и SST, учитывает новые значения и tombstones. Values читаются только для выбранных версий. Default limit 100; Rust API поддерживает Included/Excluded с обеих сторон и пересечение с prefix. CLI range — [start,end). Форматы файлов не менялись; JS DB API пока использует WAL-only, без native SST/manifest. [Сценарий проверки с ожидаемым выводом](docs/SCANS.md).
 
 ## Rust: compaction и GC
 
@@ -274,3 +274,9 @@ max_wal_bytes/--wal-limit проверяет длину журнала с нов
 ## Подписки DB — C3
 
 BrowserDB и его коллекции теперь поддерживают `subscribe(key, listener)` и `subscribeRange({ start, end, prefix }, listener)`. Уведомления приходят после подтверждённой put/delete. Ошибки callbacks отделены от сохранения через `DBNotificationError` с `committed: true`; close/transport failure очищают подписки. Пример, ограничения и счётчик в OPFS демо — [OPFS.md](docs/OPFS.md#c3-подписки-после-подтверждения).
+
+## Отмена browser DB — C4
+
+openDB(name,{signal}) и get/put/delete с последними options принимают native AbortController.signal; scan принимает signal во втором аргументе: `db.scan({ prefix }, { signal })`. Коллекции используют те же сигнатуры. Публичный DBAbortSignal — structural type без требования DOM types или глобального AbortSignal.
+
+Для валидного запроса pre-aborted signal возвращает ABORTED до отправки и сохраняет соединение; pre-aborted open не создаёт Worker. После dispatch abort завершает весь Worker и все pending requests: mutation могла сохраниться, rollback и автоматического retry нет. Нужны reopen и проверка состояния. Signal open действует только до ACK открытия. Listener снимается до postcommit callbacks, поэтому abort собственного signal из callback не отменяет ACK. [API и ограничения](docs/OPFS.md#c4-отмена-через-abortsignal) · [ADR0013](docs/adr/0013-browser-cancellation.md).

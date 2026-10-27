@@ -60,3 +60,12 @@ Publication is pending: license, npm/GitHub ownership and final version/metadata
 - Postcommit callback errors reported as DBNotificationError/AggregateError with committed:true; asynchronous listener results rejected without unhandled native Promise rejection.
 - Independent registration order, unsubscribe during dispatch and automatic cleanup at close/transport failure.
 - Real OPFS successful/failing flush coverage and demo prefix subscription counter. Durable WAL and Worker protocol unchanged.
+
+### Browser cancellation (C4)
+
+- Public structural DBAbortSignal/DBOperationOptions, compatible with native AbortController and consumers without DOM types.
+- Optional signals for openDB, get/put/delete and separate operation options for scan; byte collections forward the same options. Open signals apply only until open ACK.
+- Valid pre-aborted requests and registration races reject only the unsent request with ABORTED; pre-aborted open creates no Worker.
+- Abort after dispatch terminates the whole Worker, clears subscriptions and rejects all pending work with ABORTED. Mutation outcomes may be committed; no rollback, retries or automatic resend.
+- Centralized signal/timer cleanup on all settlement paths, before subscriber callbacks. Throwing custom signal methods cannot lose an ACK or retain active pending requests.
+- Existing WAL v1, OPFS layout and Worker protocol2 retained.

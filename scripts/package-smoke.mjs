@@ -54,6 +54,10 @@ try {
     assert.equal(subscriberError.committed, true);
     assert.equal(subscriberError.code, 'SUBSCRIBER_FAILED');
     assert.equal(typeof globalThis.Worker, 'undefined');
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(openDB('preaborted', { signal: controller.signal }),
+      error => error instanceof DBError && error.code === 'ABORTED');
     await assert.rejects(openDB('server'), error => error instanceof DBError && error.code === 'UNSUPPORTED');
     assert.equal(typeof globalThis.window, 'undefined');
     assert.throws(() => import.meta.resolve('react'), { code: 'ERR_MODULE_NOT_FOUND' });
@@ -100,13 +104,28 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
-    import { openDB, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry } from 'hoke/db';
-    const pending: Promise<BrowserDB> = openDB('typed');
+    import { openDB, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry, type DBAbortSignal, type DBOperationOptions } from 'hoke/db';
+    const signal: DBAbortSignal = {
+      aborted: false,
+      addEventListener(_type, _listener, _options) {},
+      removeEventListener(_type, _listener) {},
+    };
+    const options: DBOperationOptions = { signal };
+    const pending: Promise<BrowserDB> = openDB('typed', { ...options, timeoutMs: 100 });
     void pending;
     async function inspect(db: BrowserDB) {
+      await db.get(new Uint8Array(), options);
+      await db.put(new Uint8Array(), new Uint8Array(), options);
+      await db.delete(new Uint8Array(), options);
+      await db.scan(undefined, options);
       const rows: DBEntry[] = await db.scan({ start: { key: new Uint8Array(), inclusive: true }, reverse: true, limit: 5 });
       const collection: DBCollection = db.collection(Uint8Array.of(0, 255));
-      const relative: DBEntry[] = await collection.scan({ prefix: Uint8Array.of(1) });
+      const relative: DBEntry[] = await collection.scan({ prefix: Uint8Array.of(1) }, options);
+      await collection.get(new Uint8Array(), options);
+      await collection.put(new Uint8Array(), new Uint8Array(), options);
+      await collection.delete(new Uint8Array(), options);
+      // @ts-expect-error Cancellation requires a signal, not a boolean.
+      db.get(new Uint8Array(), { signal: true });
       const range: DBRange = { prefix: Uint8Array.of(1) };
       const listener: DBListener = () => {};
       const stops: (() => void)[] = [

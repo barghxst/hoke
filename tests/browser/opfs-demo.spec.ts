@@ -100,3 +100,54 @@ test("OPFS demo counts only confirmed mutations of the watched prefix and stops 
   await expect(page.locator("#notifications")).toHaveText("0");
   await expect(page.locator("#error")).toBeEmpty();
 });
+
+test("OPFS demo cancels an opening worker and can open again without an automatic retry", async ({
+  page,
+}) => {
+  const errors: Error[] = [];
+  page.on("pageerror", (error) => errors.push(error));
+  let release = () => {};
+  let reached = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const wasmRequested = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  await page.route(
+    "**/hoke_wasm_bg.wasm",
+    async (route) => {
+      reached();
+      await gate;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  try {
+    await page.goto("/examples/opfs/");
+    await expect(page.locator("#cancel")).toBeDisabled();
+    await page.locator("#open").click();
+    await wasmRequested;
+    await expect(page.locator("#cancel")).toBeEnabled();
+    await page.locator("#cancel").click();
+    await expect(page.locator("#error")).toContainText("ABORTED");
+    await expect(page.locator("#status")).toContainText("Откройте базу снова и проверьте данные");
+    await expect(page.locator("#open")).toBeEnabled();
+    await expect(page.locator("#put")).toBeDisabled();
+    await expect(page.locator("#watch-status")).toHaveText("Подписка выключена.");
+    await expect(page.locator("#cancel")).toBeDisabled();
+    release();
+    await page.locator("#open").click();
+    await expect(page.locator("#status")).toContainText("wal-v1");
+    await expect(page.locator("#cancel")).toBeDisabled();
+    await page.locator("#value").fill("after-abort");
+    await page.locator("#put").click();
+    await expect(page.locator("#put")).toBeEnabled();
+    await page.locator("#get").click();
+    await expect(page.locator("#result")).toHaveText("after-abort");
+    await expect(page.locator("#error")).toBeEmpty();
+    expect(errors).toEqual([]);
+  } finally {
+    release();
+  }
+});

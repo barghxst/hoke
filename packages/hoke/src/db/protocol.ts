@@ -11,6 +11,7 @@ export type DBErrorCode =
   | "STORAGE"
   | "ENGINE"
   | "CLOSED"
+  | "ABORTED"
   | "TIMEOUT"
   | "WORKER"
   | "PROTOCOL";

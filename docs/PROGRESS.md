@@ -21,15 +21,15 @@
 
 ## Последняя общая проверка
 
-C3: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции подписок и исправления Promise edge case:
+C4: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции отмены операций и демо:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
-- 222 JS tests в10 файлах, включая13 registry и91 DB client/collection cases;
+- 252 JS tests в10 файлах, включая13 registry и121 DB client/collection cases;
 - 20 actual-WASM tests,196 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 42 настоящих Chrome155/Linux browser tests:30 OPFS/WASM +3 OPFS demo +9 KV demo.
+- 50 настоящих Chrome155/Linux browser tests:37 OPFS/WASM +4 OPFS demo +9 KV demo.
 
-Rust/WASM source и durable formats в C3 не менялись; MSRV1.89.0 с196 Rust tests проверен в C2. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
+Rust/WASM source и durable formats в C4 не менялись; MSRV1.89.0 с196 Rust tests проверен в C2. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -250,3 +250,13 @@ Rust/WASM source и durable formats в C3 не менялись; MSRV1.89.0 с19
 Ручной сценарий: pnpm demo → /examples/opfs/, открыть базу, prefix user:, «Наблюдать prefix», записать user:1 →1, other →по-прежнему1, удалить user:1 →2. Unsubscribe/close прекращают callbacks. API/ошибки/границы — OPFS.md.
 
 C3 не завершает C: browser SST publication/compaction, atomic batch и DB migrations ещё впереди; multi-tab routing относится к D. Подписки видят операции только одного BrowserDB и его wrappers, не другие вкладки/процессы. Все прежние ограничения WAL-only/RSS/durability остаются.
+
+## C4: AbortSignal и завершение соединения при отмене
+
+- [x] ADR0013: structural DBAbortSignal/DBOperationOptions без требования DOM declarations; open/get/put/delete/scan и collection wrappers принимают signal.
+- [x] Pre-aborted open не создаёт Worker/OPFS; отмена до dispatch отклоняет только запрос. После dispatch завершается Worker, очищаются subscriptions и все pending получают ABORTED. Уже отправленная запись могла сохраниться.
+- [x] Listener регистрируется до отправки, signal перепроверяется; ACK/ошибка/timeout/close очищают timers/listeners до callbacks. Abort после open ACK или из собственного commit callback не завершает здоровое соединение.
+- [x] 30 новых unit regressions,7 настоящих OPFS cases, UI отмены с детерминированной задержкой WASM и reopen. Tarball runtime/типы проверены без DOM/React.
+- [x] Полный check:252 JS +196 Rust +20 WASM +11 Python +50 Chrome tests; Biome, typecheck, rustfmt и strict Clippy прошли. WAL v1, Worker protocol2 и зависимости не менялись.
+
+Код и демо фиксируются отдельным локальным коммитом под barghxst без assistant/agent attribution и push. Следующая файловая архитектура подготовлена отдельно как предложенный ADR0014: три варианта публикации SST/compaction, реальные API-наблюдения и fault matrix. Это исследование, не принятое решение о новом формате. Probe воспроизведён root на isolated Chrome155; successful move/reload не доказывают atomic durability или потерю питания.

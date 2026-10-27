@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DBError, DBNotificationError, type DBRange, openDB } from "./index.js";
+import { type DBAbortSignal, DBError, DBNotificationError, type DBRange, openDB } from "./index.js";
 import { MAX_KEY_BYTES, MAX_VALUE_BYTES, PROTOCOL_VERSION, type Request } from "./protocol.js";
 
 class FakeWorker {
@@ -732,5 +732,399 @@ describe("subscription callback lifecycle", () => {
     worker.onerror?.({ preventDefault: vi.fn() } as unknown as ErrorEvent);
     expect(listener).not.toHaveBeenCalled();
     expect(() => db.subscribeRange({}, listener)).toThrow(DBError);
+  });
+});
+
+class TestAbortSignal implements DBAbortSignal {
+  aborted = false;
+  readonly listeners = new Set<() => void>();
+  readonly addEventListener = vi.fn((_type: "abort", listener: () => void) => {
+    this.listeners.add(listener);
+  });
+  readonly removeEventListener = vi.fn((_type: "abort", listener: () => void) => {
+    this.listeners.delete(listener);
+  });
+  abort() {
+    this.aborted = true;
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+describe("browser DB cancellation", () => {
+  it("validates before handling a pre-aborted open and creates no worker", async () => {
+    const signal = new TestAbortSignal();
+    signal.abort();
+    await expect(openDB("../bad", { signal })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(openDB("test", { timeoutMs: 0, signal })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(openDB("test", { signal })).rejects.toMatchObject({ code: "ABORTED" });
+    expect(FakeWorker.instances).toHaveLength(0);
+    expect(signal.addEventListener).not.toHaveBeenCalled();
+  });
+
+  it("does not require a global AbortSignal and accepts native controllers", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("AbortSignal", undefined);
+    controller.abort();
+    await expect(openDB("test", { signal: controller.signal })).rejects.toMatchObject({
+      code: "ABORTED",
+    });
+    expect(FakeWorker.instances).toHaveLength(0);
+  });
+
+  it.each([
+    null,
+    {},
+    { aborted: false },
+    { aborted: 1, addEventListener() {}, removeEventListener() {} },
+  ])("rejects invalid structural signal %j before creating a worker", async (signal) => {
+    await expect(openDB("test", { signal: signal as DBAbortSignal })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(FakeWorker.instances).toHaveLength(0);
+  });
+
+  it("rejects pre-aborted valid operations locally while preserving unrelated work", async () => {
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    signal.abort();
+    const other = db.get(new Uint8Array([1]));
+    await expect(db.get(new Uint8Array(), { signal })).rejects.toMatchObject({ code: "ABORTED" });
+    await expect(db.put(new Uint8Array(), new Uint8Array(), { signal })).rejects.toMatchObject({
+      code: "ABORTED",
+    });
+    await expect(db.delete(new Uint8Array(), { signal })).rejects.toMatchObject({
+      code: "ABORTED",
+    });
+    await expect(db.scan({}, { signal })).rejects.toMatchObject({ code: "ABORTED" });
+    await expect(db.scan({ limit: -1 }, { signal })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(
+      db.put(new Uint8Array(), null as unknown as Uint8Array, { signal }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(worker.requests).toHaveLength(2);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    worker.respond(2);
+    await other;
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("aborts a dispatched opening request and detaches its signal", async () => {
+    vi.useFakeTimers();
+    const signal = new TestAbortSignal();
+    const opening = openDB("test", { signal });
+    const worker = latest();
+    signal.abort();
+    await expect(opening).rejects.toMatchObject({ code: "ABORTED" });
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(signal.listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    worker.respond(1);
+  });
+
+  it("only binds the open signal until its ACK", async () => {
+    const signal = new TestAbortSignal();
+    const opening = openDB("test", { signal });
+    const worker = latest();
+    worker.respond(1);
+    signal.abort();
+    const db = await opening;
+    expect(signal.listeners.size).toBe(0);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const reading = db.get(new Uint8Array());
+    worker.respond(2);
+    await reading;
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("terminates all in-flight work, clears listeners/timers and suppresses late ACK notifications", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    const secondSignal = new TestAbortSignal();
+    const callback = vi.fn();
+    db.subscribeRange({}, callback);
+    const mutation = db.put(new Uint8Array([1]), new Uint8Array([2]), { signal });
+    const reading = db.get(new Uint8Array([2]), { signal: secondSignal });
+    const scanning = db.scan();
+    const checking = Promise.all(
+      [mutation, reading, scanning].map((request) =>
+        expect(request).rejects.toMatchObject({ code: "ABORTED" }),
+      ),
+    );
+    signal.abort();
+    await checking;
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(signal.listeners.size).toBe(0);
+    expect(secondSignal.listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    worker.respond(2);
+    worker.respond(3);
+    worker.respond(4);
+    expect(callback).not.toHaveBeenCalled();
+    await expect(db.get(new Uint8Array())).rejects.toMatchObject({ code: "CLOSED" });
+    await db.close();
+  });
+
+  it.each(["event", "flag"] as const)(
+    "handles a registration %s race without dispatch or closing the connection",
+    async (race) => {
+      vi.useFakeTimers();
+      const { db, worker } = await connected();
+      const signal = new TestAbortSignal();
+      signal.addEventListener.mockImplementation((_type, listener) => {
+        signal.listeners.add(listener);
+        signal.aborted = true;
+        if (race === "event") listener();
+      });
+      await expect(db.get(new Uint8Array(), { signal })).rejects.toMatchObject({ code: "ABORTED" });
+      expect(worker.requests).toHaveLength(1);
+      expect(worker.terminate).not.toHaveBeenCalled();
+      expect(signal.listeners.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      const reading = db.get(new Uint8Array());
+      worker.respond(worker.requests.at(-1)?.id as number);
+      await reading;
+      const close = db.close();
+      worker.respond(worker.requests.at(-1)?.id as number);
+      await close;
+    },
+  );
+
+  it("settles and detaches before subscription callbacks can abort the same signal", async () => {
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    db.subscribeRange({}, () => signal.abort());
+    const mutation = db.put(new Uint8Array(), new Uint8Array(), { signal });
+    const other = db.get(new Uint8Array());
+    worker.respond(2);
+    await mutation;
+    expect(signal.listeners.size).toBe(0);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    worker.respond(3);
+    await other;
+    const close = db.close();
+    worker.respond(4);
+    await close;
+  });
+
+  it.each(["success", "storage", "timeout", "post", "protocol", "worker", "close"] as const)(
+    "detaches listeners on %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const { db, worker } = await connected(10);
+      const signal = new TestAbortSignal();
+      if (outcome === "post") worker.throwOnPost = true;
+      const reading = db.get(new Uint8Array(), { signal });
+      const expected =
+        outcome === "success" || outcome === "close"
+          ? expect(reading).resolves.toBeUndefined()
+          : expect(reading).rejects.toBeInstanceOf(DBError);
+      if (outcome === "success") worker.respond(2);
+      if (outcome === "storage") worker.error(2);
+      if (outcome === "timeout") await vi.advanceTimersByTimeAsync(10);
+      if (outcome === "protocol") worker.message(null);
+      if (outcome === "worker") worker.onmessageerror?.();
+      if (outcome === "close") {
+        const closing = db.close();
+        worker.respond(2);
+        worker.respond(3);
+        await closing;
+      }
+      await expected;
+      expect(signal.listeners.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      const calls = worker.terminate.mock.calls.length;
+      signal.abort();
+      expect(worker.terminate).toHaveBeenCalledTimes(calls);
+      if (outcome === "success" || outcome === "storage") {
+        const close = db.close();
+        worker.respond(3);
+        await close;
+      }
+    },
+  );
+
+  it("recovers cleanly from a signal that registers then throws", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    signal.addEventListener.mockImplementation((_type, listener) => {
+      signal.listeners.add(listener);
+      throw new Error("bad add");
+    });
+    await expect(db.get(new Uint8Array(), { signal })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(signal.listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(worker.requests).toHaveLength(1);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it.each([true, false])(
+    "ignores throwing removal after ACK=%s and leaves retained callbacks inert",
+    async (success) => {
+      vi.useFakeTimers();
+      const { db, worker } = await connected();
+      const signal = new TestAbortSignal();
+      signal.removeEventListener.mockImplementation(() => {
+        throw new Error("bad remove");
+      });
+      const reading = db.get(new Uint8Array(), { signal });
+      if (success) {
+        worker.respond(2);
+        await reading;
+      } else {
+        const checking = expect(reading).rejects.toMatchObject({ code: "STORAGE" });
+        worker.error(2);
+        await checking;
+      }
+      expect(vi.getTimerCount()).toBe(0);
+      signal.abort();
+      expect(worker.terminate).not.toHaveBeenCalled();
+      const close = db.close();
+      worker.respond(3);
+      await close;
+    },
+  );
+
+  it("treats signal getter failures as local invalid arguments", async () => {
+    const { db, worker } = await connected();
+    const signal = {
+      get aborted(): boolean {
+        throw new Error("getter");
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    await expect(db.get(new Uint8Array(), { signal })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(worker.requests).toHaveLength(1);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const close = db.close();
+    worker.respond(2);
+    await close;
+  });
+});
+
+describe("adversarial cancellation cleanup", () => {
+  it("detaches after the aborted getter starts throwing during registration", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    signal.addEventListener.mockImplementation((_type, listener) => {
+      signal.listeners.add(listener);
+      Object.defineProperty(signal, "aborted", {
+        get() {
+          throw new Error("late getter");
+        },
+      });
+    });
+    await expect(db.get(new Uint8Array(), { signal })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(signal.listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(worker.requests).toHaveLength(1);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("rejects every pending promise even if signal removal throws during cancellation", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await connected();
+    const first = new TestAbortSignal();
+    const second = new TestAbortSignal();
+    first.removeEventListener.mockImplementation(() => {
+      throw new Error("remove first");
+    });
+    second.removeEventListener.mockImplementation(() => {
+      throw new Error("remove second");
+    });
+    const reading = db.get(new Uint8Array(), { signal: first });
+    const mutation = db.delete(new Uint8Array(), { signal: second });
+    const checking = Promise.all(
+      [reading, mutation].map((request) =>
+        expect(request).rejects.toMatchObject({ code: "ABORTED" }),
+      ),
+    );
+    first.abort();
+    await checking;
+    second.abort();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not replace committed notification failures when a callback aborts its own signal", async () => {
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    db.subscribeRange({}, () => {
+      signal.abort();
+      throw new Error("notification");
+    });
+    const mutation = db.delete(new Uint8Array(), { signal });
+    const checking = expect(mutation).rejects.toMatchObject({
+      code: "SUBSCRIBER_FAILED",
+      committed: true,
+    });
+    worker.respond(2);
+    await checking;
+    expect(worker.terminate).not.toHaveBeenCalled();
+    expect(signal.listeners.size).toBe(0);
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("does not let a reentrant removal invoke its settled abort callback", async () => {
+    const { db, worker } = await connected();
+    const signal = new TestAbortSignal();
+    signal.removeEventListener.mockImplementation((_type, listener) => {
+      listener();
+      signal.listeners.delete(listener);
+    });
+    const reading = db.get(new Uint8Array(), { signal });
+    worker.respond(2);
+    await reading;
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("cleans up failed open registration and open error acknowledgements", async () => {
+    vi.useFakeTimers();
+    const broken = new TestAbortSignal();
+    broken.addEventListener.mockImplementation((_type, listener) => {
+      broken.listeners.add(listener);
+      throw new Error("registration");
+    });
+    await expect(openDB("test", { signal: broken })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    expect(latest().requests).toHaveLength(0);
+    expect(latest().terminate).toHaveBeenCalledOnce();
+    expect(broken.listeners.size).toBe(0);
+    const signal = new TestAbortSignal();
+    const opening = openDB("test", { signal });
+    const checking = expect(opening).rejects.toMatchObject({ code: "LOCKED" });
+    latest().error(1, "LOCKED");
+    await checking;
+    expect(signal.listeners.size).toBe(0);
+    expect(latest().terminate).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

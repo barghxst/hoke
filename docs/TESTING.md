@@ -203,3 +203,11 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 В OPFS демо откройте базу, задайте prefix user:, включите «Наблюдать prefix», запишите user:1 и other: счётчик должен увеличиться только от первого ключа. Read/scan не увеличивают счётчик; unsubscribe и close прекращают наблюдение. Сохранение одинакового значения и delete отсутствующего ключа после ACK тоже считаются invalidation.
 
 Для ошибок callback проверьте экспортированный DBNotificationError: committed=true означает уже сохранённую mutation, а не необходимость повтора. Реальный Chrome-тест проверяет дальнейшее чтение/reopen и сохранённые bytes после такого reject. Ошибка OPFS flush с unknown outcome не вызывает callback даже при обнаружении записи после recovery. Формат/protocol остаются прежними; [контракт](adr/0012-browser-commit-subscriptions.md).
+
+## 17. Отмена browser DB (C4)
+
+`pnpm test` включает121 DB client/collection tests, из них30 новых регрессионных сценариев отмены. `tests/browser/db-abort.spec.ts` добавляет7 настоящих OPFS cases: отмена до отправки без изменения WAL, отмена open с освобождением владельца, потерянный ACK после commit, несколько pending запросов и очистка signal до callback. Installed tarball проверяет структурные типы без DOM и pre-aborted open в Node без Worker.
+
+В `/examples/opfs/` кнопка «Прервать текущий запрос» доступна во время open/get/put/delete/scan. Быстрый запрос может завершиться раньше клика; детерминированный UI-тест удерживает загрузку WASM, отменяет open и затем проверяет повторное открытие и сохранение. После отмены отправленного запроса заново откройте базу и прочитайте состояние: запись могла сохраниться, автоматического повтора нет.
+
+Полный прогон: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all`. Контракт и сигнатуры — [ADR0013](adr/0013-browser-cancellation.md). Отдельное исследование будущей публикации SST — [OPFS capabilities](OPFS_CAPABILITIES.md); probe не доказывает crash/power-loss durability.

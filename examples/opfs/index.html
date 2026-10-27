@@ -42,6 +42,7 @@
     </p>
     <button id="open" type="button">Открыть базу</button>
     <button id="close" type="button" disabled>Закрыть базу</button>
+    <button id="cancel" type="button" disabled>Отменить операцию</button>
     <p><label for="key">Ключ</label></p>
     <input id="key" value="theme">
     <p><label for="value">Значение</label></p>
@@ -74,8 +75,9 @@
     <p id="error" role="alert"></p>
     <pre id="result">Здесь появится прочитанное значение.</pre>
     <p>
-      ACK записи возвращается после OPFS flush. Ошибка/таймаут могут означать неизвестный исход
-      записи: закройте базу, откройте снова и прочитайте значение. Автоматического повтора нет.
+      ACK записи возвращается после OPFS flush. Отмена, ошибка или таймаут могут означать
+      неизвестный исход записи: закройте базу, откройте снова и прочитайте значение. Автоматического
+      повтора нет.
     </p>
     <script type="module">
     import { openDB } from "../../packages/hoke/dist/db/index.js";
@@ -86,6 +88,7 @@
     const key = () => encoder.encode(element("key").value);
     let db;
     let busy = false;
+    let controller;
     let unwatch = () => {};
     let watching = false;
     let notificationCount = 0;
@@ -97,30 +100,43 @@
     }
     function controls() {
       element("open").disabled = busy || Boolean(db);
+      element("cancel").disabled = !controller || controller.signal.aborted;
       element("close").disabled = busy || !db;
       element("watch").disabled = busy || !db;
       element("unwatch").disabled = busy || !watching;
       for (const id of ["put", "get", "delete", "scan"]) element(id).disabled = busy || !db;
     }
-    async function attempt(action) {
+    async function attempt(action, cancellable = false) {
       if (busy) return;
       busy = true;
+      controller = cancellable ? new AbortController() : undefined;
       controls();
       element("error").textContent = "";
       try {
-        await action();
+        await action(controller?.signal);
       } catch (error) {
+        if (error.code === "ABORTED") {
+          stopWatch();
+          db = undefined;
+          element("status").textContent =
+            "Операция отменена. Откройте базу снова и проверьте данные: запись могла сохраниться.";
+        }
         element("error").textContent = `${error.code ?? "ERROR"}: ${error.message}`;
       } finally {
+        controller = undefined;
         busy = false;
         controls();
       }
     }
+    element("cancel").addEventListener("click", () => {
+      controller?.abort();
+      controls();
+    });
     element("open").addEventListener("click", () =>
-      attempt(async () => {
-        db = await openDB("browser-demo");
+      attempt(async (signal) => {
+        db = await openDB("browser-demo", { signal });
         element("status").textContent = `База открыта: ${db.mode}.`;
-      }),
+      }, true),
     );
     element("close").addEventListener("click", () =>
       attempt(async () => {
@@ -132,31 +148,34 @@
       }),
     );
     element("put").addEventListener("click", () =>
-      attempt(async () => {
-        await db.put(key(), encoder.encode(element("value").value));
+      attempt(async (signal) => {
+        await db.put(key(), encoder.encode(element("value").value), { signal });
         element("result").textContent = "Запись подтверждена после OPFS flush.";
-      }),
+      }, true),
     );
     element("get").addEventListener("click", () =>
-      attempt(async () => {
-        const value = await db.get(key());
+      attempt(async (signal) => {
+        const value = await db.get(key(), { signal });
         element("result").textContent =
           value === undefined ? "Ключ отсутствует." : decoder.decode(value);
-      }),
+      }, true),
     );
     element("delete").addEventListener("click", () =>
-      attempt(async () => {
-        await db.delete(key());
+      attempt(async (signal) => {
+        await db.delete(key(), { signal });
         element("result").textContent = "Удаление подтверждено после OPFS flush.";
-      }),
+      }, true),
     );
     element("scan").addEventListener("click", () =>
-      attempt(async () => {
-        const entries = await db.scan({
-          prefix: encoder.encode(element("prefix").value),
-          reverse: element("reverse").checked,
-          limit: Number(element("limit").value),
-        });
+      attempt(async (signal) => {
+        const entries = await db.scan(
+          {
+            prefix: encoder.encode(element("prefix").value),
+            reverse: element("reverse").checked,
+            limit: Number(element("limit").value),
+          },
+          { signal },
+        );
         element("entries").textContent = JSON.stringify(
           entries.map(({ key, value }) => ({
             key: decoder.decode(key),
@@ -165,7 +184,7 @@
           null,
           2,
         );
-      }),
+      }, true),
     );
     element("watch").addEventListener("click", () =>
       attempt(() => {
