@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCollection } from "./collection.js";
 import { type BrowserDB, DBError } from "./index.js";
+import { type DBListener, type DBRange, WatchRegistry } from "./notifications.js";
 import { type DBEntry, type DBScanOptions, normalizeScanOptions } from "./scan.js";
 
 function database() {
   const entries = new Map<string, Uint8Array>();
   const token = (key: Uint8Array) => Array.from(key).join(",");
   let closed = false;
+  const watchers = new WatchRegistry();
   function open() {
     if (closed) throw new DBError("CLOSED", "Database is closed");
   }
@@ -19,14 +21,26 @@ function database() {
     put: vi.fn(async (key: Uint8Array, value: Uint8Array) => {
       open();
       entries.set(token(key), new Uint8Array(value));
+      const error = watchers.notify(key);
+      if (error) throw error;
     }),
     delete: vi.fn(async (key: Uint8Array) => {
       open();
       entries.delete(token(key));
+      const error = watchers.notify(key);
+      if (error) throw error;
     }),
     scan: vi.fn(async (_options?: DBScanOptions): Promise<DBEntry[]> => {
       open();
       return [];
+    }),
+    subscribe: vi.fn((key: Uint8Array, listener: DBListener) => {
+      open();
+      return watchers.subscribe(key, listener);
+    }),
+    subscribeRange: vi.fn((range: DBRange, listener: DBListener) => {
+      open();
+      return watchers.subscribeRange(range, listener);
     }),
     collection(prefix) {
       open();
@@ -34,6 +48,7 @@ function database() {
     },
     async close() {
       closed = true;
+      watchers.clear();
     },
   };
   return { db, entries };
@@ -163,6 +178,8 @@ describe("byte collections", () => {
     await expect(collection.delete(bytes())).rejects.toMatchObject({ code: "CLOSED" });
     await expect(collection.scan()).rejects.toMatchObject({ code: "CLOSED" });
     expect(() => db.collection(bytes())).toThrow(DBError);
+    expect(() => collection.subscribe(bytes(), vi.fn())).toThrow(DBError);
+    expect(() => collection.subscribeRange({}, vi.fn())).toThrow(DBError);
   });
 
   it("preserves big-endian namespace length across the one-byte boundary", async () => {
@@ -182,5 +199,83 @@ describe("byte collections", () => {
     const normalized = normalizeScanOptions(translated);
     expect(normalized.start?.key).toEqual(bytes(1, 0, 0, 0, 1, 4));
     expect(normalized.end?.key).toEqual(bytes(1, 0, 0, 0, 1, 4, 255));
+  });
+});
+
+describe("collection subscriptions", () => {
+  it("scopes whole ranges, exact keys and relative bounds to their namespace", async () => {
+    const { db } = database();
+    const first = db.collection(bytes(1));
+    const second = db.collection(bytes(1, 2));
+    const exact = vi.fn();
+    const range = vi.fn();
+    const all = vi.fn();
+    first.subscribe(bytes(2), exact);
+    first.subscribeRange(
+      {
+        start: { key: bytes(2), inclusive: true },
+        end: { key: bytes(4), inclusive: false },
+        prefix: bytes(),
+      },
+      range,
+    );
+    first.subscribeRange({}, all);
+    await first.put(bytes(2), bytes(9));
+    await first.put(bytes(4), bytes(9));
+    await second.put(bytes(2), bytes(9));
+    await db.put(bytes(2), bytes(9));
+    await first.delete(bytes(2));
+    expect(exact).toHaveBeenCalledTimes(2);
+    expect(range).toHaveBeenCalledTimes(2);
+    expect(all).toHaveBeenCalledTimes(3);
+    expect(db.subscribeRange).toHaveBeenLastCalledWith({ prefix: bytes(1, 0, 0, 0, 1, 1) }, all);
+  });
+
+  it("copies namespace, keys and range metadata and supports idempotent unsubscribe", async () => {
+    const { db } = database();
+    const namespace = bytes(7);
+    const collection = db.collection(namespace);
+    const key = bytes(3);
+    const prefix = bytes(3);
+    const start = { key: bytes(3), inclusive: true };
+    const exact = vi.fn();
+    const range = vi.fn();
+    const off = collection.subscribe(key, exact);
+    const offRange = collection.subscribeRange({ prefix, start }, range);
+    namespace[0] = 8;
+    key[0] = 9;
+    prefix[0] = 9;
+    start.key[0] = 9;
+    start.inclusive = false;
+    await collection.put(bytes(3), bytes());
+    expect(exact).toHaveBeenCalledOnce();
+    expect(range).toHaveBeenCalledOnce();
+    off();
+    off();
+    offRange();
+    offRange();
+    await collection.delete(bytes(3));
+    expect(exact).toHaveBeenCalledOnce();
+    expect(range).toHaveBeenCalledOnce();
+    await db.close();
+    off();
+    offRange();
+  });
+
+  it("rejects scan-only options and oversized physical range keys synchronously", () => {
+    const { db } = database();
+    const collection = db.collection(new Uint8Array(65531));
+    for (const range of [
+      { limit: 1 },
+      { reverse: false },
+      { prefix: bytes(1) },
+      { start: { key: bytes(1), inclusive: true } },
+      null,
+    ]) {
+      expect(() => collection.subscribeRange(range as DBRange, vi.fn())).toThrow(DBError);
+    }
+    expect(db.subscribeRange).not.toHaveBeenCalled();
+    expect(() => collection.subscribe(bytes(1), vi.fn())).toThrow(DBError);
+    expect(db.subscribe).not.toHaveBeenCalled();
   });
 });

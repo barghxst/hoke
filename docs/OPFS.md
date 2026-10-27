@@ -1,6 +1,6 @@
 # Экспериментальный Rust/WASM WAL в браузере
 
-C1/C2 переносят существующий WAL-only Rust Engine в Dedicated Worker с настоящим OPFS. Это отдельный backend hoke/db; KV/localStorage и React entry points не загружают WASM при импорте. Native Database с SST/manifest/compaction остаётся отдельным Rust API.
+C1–C3 переносят существующий WAL-only Rust Engine в Dedicated Worker с настоящим OPFS. Это отдельный backend hoke/db; KV/localStorage и React entry points не загружают WASM при импорте. Native Database с SST/manifest/compaction остаётся отдельным Rust API.
 
 ## Подготовка
 
@@ -64,7 +64,7 @@ HOKE_BROWSER_CHANNEL=chrome pnpm check:all
 
 ## Текущие границы и следующий шаг
 
-Весь WAL проигрывается в map при open, общий размер базы не ограничивается API. SST, compaction/GC, atomic batch, subscriptions и DB migrations в браузерном API пока отсутствуют. Scan и байтовые коллекции добавлены в C2, см. ниже. Не используйте этот срез для неограниченного журнала. Полный C ещё не завершён: перенос multi-file publication потребует отдельного ADR и fault tests. Multi-tab здесь означает явный отказ второму владельцу, не совместный доступ.
+Весь WAL проигрывается в map при open, общий размер базы не ограничивается API. SST, compaction/GC, atomic batch и DB migrations в браузерном API пока отсутствуют. Scan и байтовые коллекции добавлены в C2, см. ниже. Не используйте этот срез для неограниченного журнала. Полный C ещё не завершён: перенос multi-file publication потребует отдельного ADR и fault tests. Multi-tab здесь означает явный отказ второму владельцу, не совместный доступ.
 
 Архитектура и альтернативы — [ADR0010](adr/0010-browser-wal-worker.md). OPFS требует Dedicated Worker и secure context; источники: [sync handles](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemFileHandle/createSyncAccessHandle), [flush](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemSyncAccessHandle/flush).
 
@@ -96,8 +96,45 @@ const selected = await users.scan({
 // selected[0].key === bytes("001"), без физического namespace.
 ```
 
-DBCollection предоставляет get/put/delete/scan с bytes и разделяет срок жизни/ошибки своей базы. Отдельного close нет. Имя коллекции — любые bytes, включая пустые; копируется при создании. Безопасный namespace:0x01 + u32BE длина prefix + prefix. Коллекции a/ab с ключами bc/c не сливаются. Максимум prefix65531bytes; namespace+local key должен помещаться в64KiB. Collection scan использует относительные bounds/prefix и не выходит за свою коллекцию. Root db.scan показывает физические ключи всех коллекций, существующие raw keys автоматически не переносятся.
+DBCollection предоставляет get/put/delete/scan и подписки с bytes и разделяет срок жизни/ошибки своей базы. Отдельного close нет. Имя коллекции — любые bytes, включая пустые; копируется при создании. Безопасный namespace:0x01 + u32BE длина prefix + prefix. Коллекции a/ab с ключами bc/c не сливаются. Максимум prefix65531bytes; namespace+local key должен помещаться в64KiB. Collection scan использует относительные bounds/prefix и не выходит за свою коллекцию. Root db.scan показывает физические ключи всех коллекций, существующие raw keys автоматически не переносятся.
 
 Worker protocol теперь v2: старые request/response отклоняются. WAL по-прежнему v1, ранее сохранённые данные открываются без миграции. Scan читает Rust map через общий native range-код без файловых операций; это согласованное состояние на момент выполнения запроса в очереди Worker, не snapshot на момент вызова из main thread.
 
 В демо можно сохранить user:1=Alice и user:2=Bob, установить prefix user:, reverse и limit1, затем «Прочитать список». После reload данные сохраняются; после удаления user:2 выдаётся user:1. Архитектура, лимиты и key encoding — [ADR0011](adr/0011-browser-scans-collections.md).
+
+## C3: подписки после подтверждения
+
+```ts
+import { DBNotificationError } from "hoke/db";
+
+let changes = 0;
+const stop = db.subscribeRange({ prefix: new TextEncoder().encode("user:") }, () => {
+  changes++;
+});
+const stopKey = db.subscribe(new TextEncoder().encode("user:1"), () => {
+  // Синхронный callback: здесь можно пометить UI для обновления.
+});
+try {
+  await db.put(new TextEncoder().encode("user:1"), new Uint8Array([1]));
+} catch (error) {
+  if (error instanceof DBNotificationError) {
+    // committed === true: запись сохранена, errors содержит ошибки callbacks.
+    // Не повторяйте mutation автоматически.
+  } else {
+    throw error;
+  }
+} finally {
+  stop();
+  stopKey();
+}
+```
+
+subscribe принимает точный byte key; subscribeRange — {start,end,prefix} с теми же inclusive/exclusive правилами, что scan. Без фильтров `{}` наблюдает все ключи. limit/reverse не принимаются: это множество ключей, а не текущая страница scan. Входные bytes копируются. DBCollection поддерживает те же методы с относительными ключами/range, которые остаются внутри её namespace.
+
+Callback вызывается синхронно после проверенного successful ACK put/delete, до завершения Promise этой mutation. Начального callback нет; get/scan/replay не уведомляют. Повторная запись того же значения и удаление отсутствующего ключа тоже дают invalidation. Отдельный get/scan из callback увидит состояние на момент обработки нового запроса в Worker, а не снимок исходной записи.
+
+Callbacks должны возвращать void синхронно. Если нужна async работа, запускайте её отдельно с собственным catch, не возвращая Promise из callback. Promise/thenable result считается ошибкой; native rejected Promise наблюдается без unhandled rejection, custom then method не вызывается. Все подходящие активные callbacks получают попытку вызова, а их ошибки собираются в DBNotificationError extends AggregateError: code SUBSCRIBER_FAILED, committed true. Это ошибка уведомления после сохранения; rollback и автоматического retry нет. База остаётся доступной.
+
+Регистрации независимы и идут в порядке добавления. Новые внутри dispatch ждут следующую запись; unsubscribe до очереди callback отменяет его. close и terminal transport failure сразу удаляют все подписки, в том числе когда ACK ранее отправленной записи ещё ожидается. При reopen подписки регистрируются заново. Ошибка/timeout/потерянный ACK не создаёт notification даже при обнаружении записи после recovery.
+
+Подписки действуют для операций одного BrowserDB и его collection wrappers. Между вкладками события пока не маршрутизируются. В демо задайте prefix user:, нажмите «Наблюдать prefix», сохраните user:1, затем other: счётчик изменится только от user:1. «Остановить подписку» и закрытие базы прекращают наблюдение. Решение и проверки — [ADR0012](adr/0012-browser-commit-subscriptions.md).

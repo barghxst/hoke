@@ -63,3 +63,40 @@ test("OPFS demo lists live records with prefix, reverse and limit after reload",
   );
   await expect(page.locator("#error")).toBeEmpty();
 });
+
+test("OPFS demo counts only confirmed mutations of the watched prefix and stops on close", async ({
+  page,
+}) => {
+  await page.goto("/examples/opfs/");
+  await page.locator("#open").click();
+  await expect(page.locator("#watch")).toBeEnabled();
+  await page.locator("#prefix").fill("user:");
+  await page.locator("#watch").click();
+  await expect(page.locator("#notifications")).toHaveText("0");
+  await page.locator("#key").fill("other");
+  await page.locator("#put").click();
+  await expect(page.locator("#put")).toBeEnabled();
+  await expect(page.locator("#notifications")).toHaveText("0");
+  await page.locator("#key").fill("user:1");
+  await page.locator("#put").click();
+  await expect(page.locator("#notifications")).toHaveText("1");
+  await page.locator("#get").click();
+  await expect(page.locator("#get")).toBeEnabled();
+  await expect(page.locator("#notifications")).toHaveText("1");
+  await page.locator("#delete").click();
+  await expect(page.locator("#notifications")).toHaveText("2");
+  await page.locator("#unwatch").click();
+  await page.locator("#put").click();
+  await expect(page.locator("#put")).toBeEnabled();
+  await expect(page.locator("#notifications")).toHaveText("2");
+  await page.locator("#watch").click();
+  await expect(page.locator("#notifications")).toHaveText("0");
+  await page.locator("#close").click();
+  await expect(page.locator("#watch-status")).toHaveText("Подписка выключена.");
+  await page.locator("#open").click();
+  await expect(page.locator("#put")).toBeEnabled();
+  await page.locator("#put").click();
+  await expect(page.locator("#put")).toBeEnabled();
+  await expect(page.locator("#notifications")).toHaveText("0");
+  await expect(page.locator("#error")).toBeEmpty();
+});

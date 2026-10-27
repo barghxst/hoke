@@ -48,7 +48,11 @@ try {
   const consumer = `
     import assert from 'node:assert/strict';
     import { createKV, createStore, defineStore, createLocalStorage } from 'hoke/kv';
-    import { openDB, DBError } from 'hoke/db';
+    import { openDB, DBError, DBNotificationError } from 'hoke/db';
+    const subscriberError = new DBNotificationError([new Error('listener')]);
+    assert(subscriberError instanceof AggregateError);
+    assert.equal(subscriberError.committed, true);
+    assert.equal(subscriberError.code, 'SUBSCRIBER_FAILED');
     assert.equal(typeof globalThis.Worker, 'undefined');
     await assert.rejects(openDB('server'), error => error instanceof DBError && error.code === 'UNSUPPORTED');
     assert.equal(typeof globalThis.window, 'undefined');
@@ -96,13 +100,28 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
-    import { openDB, type BrowserDB, type DBCollection, type DBEntry } from 'hoke/db';
+    import { openDB, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry } from 'hoke/db';
     const pending: Promise<BrowserDB> = openDB('typed');
     void pending;
     async function inspect(db: BrowserDB) {
       const rows: DBEntry[] = await db.scan({ start: { key: new Uint8Array(), inclusive: true }, reverse: true, limit: 5 });
       const collection: DBCollection = db.collection(Uint8Array.of(0, 255));
       const relative: DBEntry[] = await collection.scan({ prefix: Uint8Array.of(1) });
+      const range: DBRange = { prefix: Uint8Array.of(1) };
+      const listener: DBListener = () => {};
+      const stops: (() => void)[] = [
+        db.subscribe(new Uint8Array(), listener), db.subscribeRange(range, listener),
+        collection.subscribe(new Uint8Array(), listener), collection.subscribeRange(range, listener),
+      ];
+      stops.forEach(stop => stop());
+      const failure = new DBNotificationError([new Error('listener')]);
+      const committed: true = failure.committed;
+      const code: 'SUBSCRIBER_FAILED' = failure.code;
+      void committed; void code;
+      // @ts-expect-error Ranges do not accept scan pagination options.
+      db.subscribeRange({ limit: 1 }, listener);
+      // @ts-expect-error Subscription keys are bytes.
+      collection.subscribe('key', listener);
       // @ts-expect-error Bounds require an explicit inclusive boolean.
       db.scan({ start: { key: new Uint8Array() } });
       // @ts-expect-error Collection values are bytes.

@@ -21,17 +21,15 @@
 
 ## Последняя общая проверка
 
-C2: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции scan/collections и обновления демо:
+C3: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции подписок и исправления Promise edge case:
 
-- Biome, TypeScript build/typecheck, установленный tarball и declarations без DOM/React для DB-потребителя;
-- 195 JS tests в9 файлах, включая77 DB client/collection cases;
-- 20 тестов настоящего Rust/WASM в Node;
-- rustfmt, Clippy с -D warnings,196 Rust tests;
-- 11 Python benchmark tests;
-- 33 настоящих Chrome155/Linux browser tests:22 OPFS/WASM +2 OPFS demo +9 KV demo;
-- отдельно196 Rust tests на MSRV1.89.0/Linux, release wasm32 build.
+- Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
+- 222 JS tests в10 файлах, включая13 registry и91 DB client/collection cases;
+- 20 actual-WASM tests,196 Rust tests,11 Python benchmark tests;
+- rustfmt, Clippy с -D warnings;
+- 42 настоящих Chrome155/Linux browser tests:30 OPFS/WASM +3 OPFS demo +9 KV demo.
 
-CI подготовлен, внешнего запуска CI пока не было. Другие браузеры/ОС и физическая потеря питания не проверялись.
+Rust/WASM source и durable formats в C3 не менялись; MSRV1.89.0 с196 Rust tests проверен в C2. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -236,3 +234,19 @@ CI подготовлен, внешнего запуска CI пока не бы
 Сценарий: pnpm demo → /examples/opfs/; сохранить user:1=Alice,user:2=Bob, prefix user:, reverse, limit1 → user:2. После удаления user:2 → user:1; reload сохраняет результат. Форматы данных и dependencies не менялись. Collection key encoding применяется только к новым адресациям, прежние raw keys не перемещаются.
 
 Браузерный backend по-прежнему WAL-only, весь журнал/map остаётся в памяти, byte cap — предел результата, не RSS. Полный C не завершён: нужны multi-file SST publication/compaction, streaming при необходимости, atomic batch, subscriptions и DB migrations. Изменение durable publication/формата требует отдельного решения; этот C2 его не подменяет.
+
+## C3: key/range subscriptions после commit
+
+- [x] ADR0012: клиентский локальный registry на существующих successful put/delete ACK. WAL v1/Worker protocol2/Rust/WASM/dependencies не меняются.
+- [x] BrowserDB и DBCollection subscribe(key,listener), subscribeRange({start,end,prefix},listener). Копии inputs, binary/equal/FF bounds, пересечение prefix/range; limit/reverse отклоняются.
+- [x] Нет initial/read/scan/replay/error notification. Каждый подтверждённый put/delete инвалидирует подходящие registrations, включая одинаковое значение и удаление отсутствующего ключа.
+- [x] Stable dispatch по регистрации, независимые duplicate callbacks, добавление со следующей операции, unsubscribe до очереди, immediate close/fail cleanup. Reopen требует новых subscriptions.
+- [x] DBNotificationError extends AggregateError с code SUBSCRIBER_FAILED и committed=true: callback failures отдельно от сохранения, без rollback/retry/poison. Native Promise rejections наблюдаются; async/custom thenables отклоняются без вызова custom then.
+- [x] Read-only ревью нашло shadowed nonfunction then у native Promise; observePromise возвращает результат native brand check, registry отклоняет также такие Promise. Добавлены3 регрессионных local/cross-realm cases. Обычные void результаты не требуют Promise brand exception.
+- [x] 27 новых JS tests (13 registry +14 client/collection),8 новых actual OPFS browser cases и1 UI scenario счётчика подтверждений. Failed flush не уведомляет, после recovery может обнаружиться неизвестная запись; callback error не мешает дальнейшим операциям.
+- [x] Installed tarball smoke проверяет runtime/class и DBRange/DBListener/committed types без DOM/React. Демо наблюдает выбранный prefix и прекращает подписку при unsubscribe/close.
+- [x] Полный check:222 JS +196 Rust +20 WASM +11 Python +42 Chrome tests. Изменения оформляются отдельным локальным C3 commit под настроенным пользователем, без assistant/agent attribution и без push.
+
+Ручной сценарий: pnpm demo → /examples/opfs/, открыть базу, prefix user:, «Наблюдать prefix», записать user:1 →1, other →по-прежнему1, удалить user:1 →2. Unsubscribe/close прекращают callbacks. API/ошибки/границы — OPFS.md.
+
+C3 не завершает C: browser SST publication/compaction, atomic batch и DB migrations ещё впереди; multi-tab routing относится к D. Подписки видят операции только одного BrowserDB и его wrappers, не другие вкладки/процессы. Все прежние ограничения WAL-only/RSS/durability остаются.

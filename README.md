@@ -270,3 +270,7 @@ max_wal_bytes/--wal-limit проверяет длину журнала с нов
 `hoke/db` теперь предоставляет async openDB/get/put/delete/close через Dedicated Worker и существующий Rust WAL v1. Демо после `pnpm demo`: http://127.0.0.1:8000/examples/opfs/. Для сборки нужны WASM target и wasm-bindgen CLI0.2.129; команды, API и границы гарантий — [OPFS.md](docs/OPFS.md).
 
 Это WAL-only браузерный срез с одним владельцем файла. Browser scan/collection добавлены в C2. Native SST/compaction/atomic batch не включены в него автоматически; полный этап C ещё предстоит завершить.
+
+## Подписки DB — C3
+
+BrowserDB и его коллекции теперь поддерживают `subscribe(key, listener)` и `subscribeRange({ start, end, prefix }, listener)`. Уведомления приходят после подтверждённой put/delete. Ошибки callbacks отделены от сохранения через `DBNotificationError` с `committed: true`; close/transport failure очищают подписки. Пример, ограничения и счётчик в OPFS демо — [OPFS.md](docs/OPFS.md#c3-подписки-после-подтверждения).

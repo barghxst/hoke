@@ -1,4 +1,5 @@
 import { type BrowserDB, DBError } from "./index.js";
+import { type DBListener, type DBRange, normalizeWatchRange } from "./notifications.js";
 import { MAX_KEY_BYTES } from "./protocol.js";
 import {
   type DBEntry,
@@ -13,6 +14,8 @@ export interface DBCollection {
   put(key: Uint8Array, value: Uint8Array): Promise<void>;
   delete(key: Uint8Array): Promise<void>;
   scan(options?: DBScanOptions): Promise<DBEntry[]>;
+  subscribe(key: Uint8Array, listener: DBListener): () => void;
+  subscribeRange(range: DBRange, listener: DBListener): () => void;
 }
 
 export function createCollection(db: BrowserDB, prefix: Uint8Array): DBCollection {
@@ -53,6 +56,26 @@ export function createCollection(db: BrowserDB, prefix: Uint8Array): DBCollectio
     },
     async delete(key) {
       await db.delete(physical(key));
+    },
+    subscribe(key, listener) {
+      return db.subscribe(physical(key), listener);
+    },
+    subscribeRange(range, listener) {
+      const normalized = normalizeWatchRange(range);
+      const translated: DBRange = {
+        prefix: physical(normalized.prefix ?? new Uint8Array()),
+      };
+      if (normalized.start)
+        translated.start = {
+          key: physical(normalized.start.key),
+          inclusive: normalized.start.inclusive,
+        };
+      if (normalized.end)
+        translated.end = {
+          key: physical(normalized.end.key),
+          inclusive: normalized.end.inclusive,
+        };
+      return db.subscribeRange(translated, listener);
     },
     async scan(options) {
       let normalized: NormalizedScanOptions;

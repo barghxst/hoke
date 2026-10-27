@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DBError, openDB } from "./index.js";
+import { DBError, DBNotificationError, type DBRange, openDB } from "./index.js";
 import { MAX_KEY_BYTES, MAX_VALUE_BYTES, PROTOCOL_VERSION, type Request } from "./protocol.js";
 
 class FakeWorker {
@@ -501,5 +501,236 @@ describe("browser scans", () => {
     const scanning = db.scan(options);
     worker.respond(2, packet(entries as Array<[number[], number[]]>));
     await expect(scanning).rejects.toMatchObject({ code: "PROTOCOL" });
+  });
+});
+
+describe("browser DB subscriptions", () => {
+  const bytes = (...values: number[]) => new Uint8Array(values);
+
+  it("notifies only on successful mutation ACK, before promise settlement, with copied keys", async () => {
+    const { db, worker } = await connected();
+    const order: string[] = [];
+    const key = bytes(1);
+    db.subscribe(key, () => order.push("key"));
+    db.subscribeRange({ prefix: bytes(1) }, () => order.push("range"));
+    key[0] = 2;
+    const changed = bytes(1);
+    const put = db.put(changed, bytes(3)).then(() => order.push("resolved"));
+    changed[0] = 2;
+    expect(order).toEqual([]);
+    worker.respond(2);
+    expect(order).toEqual(["key", "range"]);
+    await put;
+    expect(order).toEqual(["key", "range", "resolved"]);
+    const get = db.get(bytes(1));
+    worker.respond(3);
+    await get;
+    expect(order).toHaveLength(3);
+    const deletion = db.delete(bytes(1));
+    worker.respond(4);
+    await deletion;
+    expect(order.slice(3)).toEqual(["key", "range"]);
+    const close = db.close();
+    worker.respond(5);
+    await close;
+  });
+
+  it("reports listener failures after commit, invokes remaining listeners and keeps DB usable", async () => {
+    const { db, worker } = await connected();
+    const failure = new Error("listener failed");
+    db.subscribe(bytes(1), () => {
+      throw failure;
+    });
+    const remaining = vi.fn();
+    db.subscribeRange({}, remaining);
+    const put = db.put(bytes(1), bytes());
+    worker.respond(2);
+    await expect(put).rejects.toBeInstanceOf(DBNotificationError);
+    await expect(put).rejects.toMatchObject({
+      code: "SUBSCRIBER_FAILED",
+      committed: true,
+      errors: [failure],
+    });
+    expect(remaining).toHaveBeenCalledOnce();
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const get = db.get(bytes(1));
+    worker.respond(3, bytes(4));
+    await expect(get).resolves.toEqual(bytes(4));
+    const close = db.close();
+    worker.respond(4);
+    await close;
+  });
+
+  it("does not notify on rejected writes, timeout or malformed success", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await connected(10);
+    const listener = vi.fn();
+    db.subscribeRange({}, listener);
+    const failed = db.put(bytes(1), bytes());
+    worker.error(2);
+    await expect(failed).rejects.toMatchObject({ code: "STORAGE" });
+    const timed = db.delete(bytes(1));
+    const checked = expect(timed).rejects.toMatchObject({ code: "TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(10);
+    await checked;
+    worker.respond(3);
+    expect(listener).not.toHaveBeenCalled();
+    const second = await connected();
+    second.db.subscribeRange({}, listener);
+    const malformed = second.db.put(bytes(1), bytes());
+    second.worker.respond(2, bytes(1));
+    await expect(malformed).rejects.toMatchObject({ code: "PROTOCOL" });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("clears watchers synchronously on close even when mutation ACK is already queued", async () => {
+    const { db, worker } = await connected();
+    const listener = vi.fn();
+    const off = db.subscribeRange({}, listener);
+    const put = db.put(bytes(1), bytes());
+    const close = db.close();
+    expect(() => db.subscribe(bytes(1), listener)).toThrow(DBError);
+    expect(() => db.subscribeRange({}, listener)).toThrow(DBError);
+    worker.respond(2);
+    await put;
+    worker.respond(3);
+    await close;
+    off();
+    off();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("never dispatches a duplicate ACK twice", async () => {
+    const { db, worker } = await connected();
+    const listener = vi.fn();
+    db.subscribe(bytes(1), listener);
+    const put = db.put(bytes(1), bytes());
+    worker.respond(2);
+    await put;
+    worker.respond(2);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    await expect(db.get(bytes(1))).rejects.toMatchObject({ code: "CLOSED" });
+  });
+
+  it("treats identical puts and deletion of missing keys as confirmed invalidations", async () => {
+    const { db, worker } = await connected();
+    const listener = vi.fn();
+    const off = db.subscribe(bytes(1), listener);
+    for (let id = 2; id <= 4; id++) {
+      const request = id === 4 ? db.delete(bytes(1)) : db.put(bytes(1), bytes(2));
+      worker.respond(id);
+      await request;
+    }
+    expect(listener).toHaveBeenCalledTimes(3);
+    off();
+    off();
+    const put = db.put(bytes(1), bytes(2));
+    worker.respond(5);
+    await put;
+    expect(listener).toHaveBeenCalledTimes(3);
+    const close = db.close();
+    worker.respond(6);
+    await close;
+  });
+
+  it("copies ranges, validates registrations locally and snapshots listeners during dispatch", async () => {
+    const { db, worker } = await connected();
+    const prefix = bytes(1);
+    const later = vi.fn();
+    let registered = false;
+    db.subscribeRange({ prefix }, () => {
+      if (!registered) {
+        db.subscribe(bytes(1), later);
+        registered = true;
+      }
+    });
+    prefix[0] = 9;
+    expect(() => db.subscribeRange({ limit: 1 } as DBRange, vi.fn())).toThrow(DBError);
+    expect(() => db.subscribe(bytes(1), null as never)).toThrow(DBError);
+    expect(worker.requests).toHaveLength(1);
+    const put = db.put(bytes(1), bytes());
+    worker.respond(2);
+    await put;
+    expect(later).not.toHaveBeenCalled();
+    const deleted = db.delete(bytes(1));
+    worker.respond(3);
+    await deleted;
+    expect(later).toHaveBeenCalledOnce();
+    const close = db.close();
+    worker.respond(4);
+    await close;
+  });
+});
+
+describe("subscription callback lifecycle", () => {
+  it("keeps request metadata private from the posted message", async () => {
+    const { db, worker } = await connected();
+    const listener = vi.fn();
+    db.subscribe(new Uint8Array([1]), listener);
+    const put = db.put(new Uint8Array([1]), new Uint8Array());
+    const posted = worker.requests[1];
+    if (posted?.op !== "put") throw new Error("Expected put");
+    posted.key[0] = 8;
+    worker.respond(2);
+    await put;
+    expect(listener).toHaveBeenCalledOnce();
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("rejects asynchronous subscribers after commit without unhandled rejections", async () => {
+    const { db, worker } = await connected();
+    db.subscribeRange({}, async () => {
+      throw new Error("async callback failure");
+    });
+    const other = vi.fn();
+    db.subscribeRange({}, other);
+    const put = db.put(new Uint8Array([1]), new Uint8Array());
+    worker.respond(2);
+    await expect(put).rejects.toMatchObject({ code: "SUBSCRIBER_FAILED", committed: true });
+    await Promise.resolve();
+    expect(other).toHaveBeenCalledOnce();
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const close = db.close();
+    worker.respond(3);
+    await close;
+  });
+
+  it("supports reentrant requests and suppresses later listeners when callback closes", async () => {
+    const { db, worker } = await connected();
+    let reading: Promise<Uint8Array | undefined> | undefined;
+    let closing: Promise<void> | undefined;
+    db.subscribeRange({}, () => {
+      reading = db.get(new Uint8Array([1]));
+      closing = db.close();
+    });
+    const skipped = vi.fn();
+    db.subscribeRange({}, skipped);
+    const put = db.put(new Uint8Array([1]), new Uint8Array());
+    worker.respond(2);
+    await put;
+    expect(worker.requests.slice(2).map((request) => request.op)).toEqual(["get", "close"]);
+    worker.respond(3);
+    await reading;
+    worker.respond(4);
+    await closing;
+    expect(skipped).not.toHaveBeenCalled();
+  });
+
+  it("does not notify on empty scans or reads and remains silent after worker errors", async () => {
+    const { db, worker } = await connected();
+    const listener = vi.fn();
+    db.subscribeRange({}, listener);
+    const scan = db.scan();
+    worker.respond(2, new Uint8Array(4));
+    await scan;
+    const get = db.get(new Uint8Array());
+    worker.respond(3);
+    await get;
+    worker.onerror?.({ preventDefault: vi.fn() } as unknown as ErrorEvent);
+    expect(listener).not.toHaveBeenCalled();
+    expect(() => db.subscribeRange({}, listener)).toThrow(DBError);
   });
 });

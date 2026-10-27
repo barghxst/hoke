@@ -1,4 +1,5 @@
 import { createCollection, type DBCollection } from "./collection.js";
+import { type DBListener, type DBRange, WatchRegistry } from "./notifications.js";
 import {
   compareBytes,
   type DBEntry,
@@ -10,6 +11,7 @@ import {
 } from "./scan.js";
 
 export type { DBCollection } from "./collection.js";
+export { type DBListener, DBNotificationError, type DBRange } from "./notifications.js";
 export type { DBEntry, DBScanOptions, ScanBound } from "./scan.js";
 
 import {
@@ -38,6 +40,8 @@ export interface BrowserDB {
   put(key: Uint8Array, value: Uint8Array): Promise<void>;
   delete(key: Uint8Array): Promise<void>;
   scan(options?: DBScanOptions): Promise<DBEntry[]>;
+  subscribe(key: Uint8Array, listener: DBListener): () => void;
+  subscribeRange(range: DBRange, listener: DBListener): () => void;
   collection(prefix: Uint8Array): DBCollection;
   close(): Promise<void>;
 }
@@ -54,9 +58,10 @@ type Command = Request extends infer R
 type Result = Uint8Array | DBEntry[] | null;
 type Pending = {
   scanOptions?: NormalizedScanOptions;
+  changedKey?: Uint8Array;
   op: Request["op"];
   resolve: (value: Result) => void;
-  reject: (error: DBError) => void;
+  reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
 const ERROR_CODES = new Set<DBErrorCode>([
@@ -141,6 +146,7 @@ class Client implements BrowserDB {
   private state: "opening" | "open" | "closing" | "closed" = "opening";
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  private readonly watchers = new WatchRegistry();
   private closePromise: Promise<void> | undefined;
   private terminalError: DBError | undefined;
 
@@ -205,6 +211,16 @@ class Client implements BrowserDB {
     return (await this.request({ op: "scan", options: normalized })) as DBEntry[];
   }
 
+  subscribe(key: Uint8Array, listener: DBListener): () => void {
+    this.assertOpen();
+    return this.watchers.subscribe(key, listener);
+  }
+
+  subscribeRange(range: DBRange, listener: DBListener): () => void {
+    this.assertOpen();
+    return this.watchers.subscribeRange(range, listener);
+  }
+
   collection(prefix: Uint8Array): DBCollection {
     this.assertOpen();
     return createCollection(this, prefix);
@@ -214,6 +230,7 @@ class Client implements BrowserDB {
     if (this.closePromise) return this.closePromise;
     if (this.state === "closed") return Promise.resolve();
     this.state = "closing";
+    this.watchers.clear();
     this.closePromise = this.request({ op: "close" }).then(
       () => this.fail(new DBError("CLOSED", "Database is closed")),
       (error: unknown) => {
@@ -231,6 +248,7 @@ class Client implements BrowserDB {
   private fail(error: DBError): void {
     if (this.state === "closed") return;
     this.state = "closed";
+    this.watchers.clear();
     this.terminalError = error;
     this.worker.terminate();
     for (const pending of this.pending.values()) {
@@ -260,6 +278,9 @@ class Client implements BrowserDB {
         reject,
         timer,
         ...(command.op === "scan" ? { scanOptions: command.options } : {}),
+        ...(command.op === "put" || command.op === "delete"
+          ? { changedKey: new Uint8Array(command.key) }
+          : {}),
       });
       try {
         this.worker.postMessage({ ...command, version: PROTOCOL_VERSION, id });
@@ -316,7 +337,12 @@ class Client implements BrowserDB {
       }
       clearTimeout(pending.timer);
       this.pending.delete(response.id);
-      pending.resolve(result);
+      const notificationError =
+        this.state === "open" && pending.changedKey
+          ? this.watchers.notify(pending.changedKey)
+          : undefined;
+      if (notificationError) pending.reject(notificationError);
+      else pending.resolve(result);
     } else {
       const error = response.error;
       if (typeof error !== "object" || error === null) {

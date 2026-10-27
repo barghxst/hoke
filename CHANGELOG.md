@@ -52,3 +52,11 @@ Publication is pending: license, npm/GitHub ownership and final version/metadata
 - Strict client packet/order/range validation and Worker protocol2, retaining durable WAL v1.
 - Byte collections with versioned length-prefixed namespaces, relative scan keys and shared DB lifecycle.
 - OPFS demo list controls and native/WASM/client/Chrome model, budget, protocol and reload coverage.
+
+### Commit subscriptions (C3)
+
+- BrowserDB/DBCollection exact-key and range subscriptions with copied byte filters.
+- Local invalidations only after successful put/delete ACKs, before the mutation Promise settles.
+- Postcommit callback errors reported as DBNotificationError/AggregateError with committed:true; asynchronous listener results rejected without unhandled native Promise rejection.
+- Independent registration order, unsubscribe during dispatch and automatic cleanup at close/transport failure.
+- Real OPFS successful/failing flush coverage and demo prefix subscription counter. Durable WAL and Worker protocol unchanged.

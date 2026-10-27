@@ -195,3 +195,11 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 Демо OPFS позволяет редактировать key/value и читать список по prefix/reverse/limit; сценарий user:1/user:2 и API коллекций описаны в [OPFS.md](OPFS.md#c2-scan-и-байтовые-коллекции). Весь browser suite: `HOKE_BROWSER_CHANNEL=chrome pnpm test:browser`. Native WAL scan отдельно: `cargo test -p hoke-core --test wal_scan`; actual WASM: `pnpm test:wasm` после сборки.
 
 Лимиты:100 строк по умолчанию, максимум1000, packet32MiB. Большая выдача возвращает явную ошибку и оставляет базу доступной. Worker protocol2 не меняет WAL v1; смешанные версии клиент/worker отвергаются. Результат имеет owned byte arrays; DBCollection выдаёт относительные ключи и разделяет lifecycle базы.
+
+## 16. Подписки DB после commit (C3)
+
+`pnpm test` включает13 registry и91 DB client/collection tests. `HOKE_BROWSER_CHANNEL=chrome pnpm test:browser` включает8 новых OPFS subscription scenarios и UI counter в демо; полный browser suite —42 tests. `pnpm check:all` объединяет их с существующими JS/Rust/WASM/Python/tarball checks.
+
+В OPFS демо откройте базу, задайте prefix user:, включите «Наблюдать prefix», запишите user:1 и other: счётчик должен увеличиться только от первого ключа. Read/scan не увеличивают счётчик; unsubscribe и close прекращают наблюдение. Сохранение одинакового значения и delete отсутствующего ключа после ACK тоже считаются invalidation.
+
+Для ошибок callback проверьте экспортированный DBNotificationError: committed=true означает уже сохранённую mutation, а не необходимость повтора. Реальный Chrome-тест проверяет дальнейшее чтение/reopen и сохранённые bytes после такого reject. Ошибка OPFS flush с unknown outcome не вызывает callback даже при обнаружении записи после recovery. Формат/protocol остаются прежними; [контракт](adr/0012-browser-commit-subscriptions.md).

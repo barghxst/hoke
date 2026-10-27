@@ -61,6 +61,15 @@
     <label><input id="reverse" type="checkbox"> Обратный порядок</label>
     <button id="scan" type="button" disabled>Прочитать список</button>
     <pre id="entries">Список ещё не запрашивался.</pre>
+    <h2>Подписка на изменения</h2>
+    <p>
+      Установите prefix выше и включите подписку. Она считает подтверждённые записи и удаления этого
+      диапазона. Для нового prefix включите подписку заново.
+    </p>
+    <button id="watch" type="button" disabled>Наблюдать prefix</button>
+    <button id="unwatch" type="button" disabled>Остановить подписку</button>
+    <p id="watch-status">Подписка выключена.</p>
+    <p>Подтверждённых изменений: <output id="notifications">0</output></p>
     <p id="status">База закрыта.</p>
     <p id="error" role="alert"></p>
     <pre id="result">Здесь появится прочитанное значение.</pre>
@@ -77,9 +86,20 @@
     const key = () => encoder.encode(element("key").value);
     let db;
     let busy = false;
+    let unwatch = () => {};
+    let watching = false;
+    let notificationCount = 0;
+    function stopWatch() {
+      unwatch();
+      unwatch = () => {};
+      watching = false;
+      element("watch-status").textContent = "Подписка выключена.";
+    }
     function controls() {
       element("open").disabled = busy || Boolean(db);
       element("close").disabled = busy || !db;
+      element("watch").disabled = busy || !db;
+      element("unwatch").disabled = busy || !watching;
       for (const id of ["put", "get", "delete", "scan"]) element(id).disabled = busy || !db;
     }
     async function attempt(action) {
@@ -105,6 +125,7 @@
     element("close").addEventListener("click", () =>
       attempt(async () => {
         const current = db;
+        stopWatch();
         db = undefined;
         await current.close();
         element("status").textContent = "База закрыта.";
@@ -146,6 +167,22 @@
         );
       }),
     );
+    element("watch").addEventListener("click", () =>
+      attempt(() => {
+        stopWatch();
+        notificationCount = 0;
+        element("notifications").textContent = "0";
+        const prefix = element("prefix").value;
+        unwatch = db.subscribeRange({ prefix: encoder.encode(prefix) }, () => {
+          notificationCount++;
+          element("notifications").textContent = String(notificationCount);
+        });
+        watching = true;
+        element("watch-status").textContent =
+          `Подписка включена: prefix ${JSON.stringify(prefix)}.`;
+      }),
+    );
+    element("unwatch").addEventListener("click", () => attempt(() => stopWatch()));
     </script>
   </body>
 </html>
