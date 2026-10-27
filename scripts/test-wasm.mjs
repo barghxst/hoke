@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { WasmWal } from "../packages/hoke/wasm/hoke_wasm.js";
+import init, { WasmSst, WasmWal } from "../packages/hoke/wasm/hoke_wasm.js";
 
 // Run the actual generated Rust/WASM artifact. This adapter only replaces the
 // byte transport; it does not emulate Engine, the WAL codec, or recovery.
@@ -447,4 +447,263 @@ test("actual WASM rejects scan after close and retains confirmed scan after fail
   assert.throws(() => scan(engine, undefined, undefined, undefined, 0, 0), /closed/);
   engine.close();
   engine.free();
+});
+
+// SST packets are ephemeral transfer framing. Durable bytes remain native SST v1.
+function packSst(rows) {
+  const packet = new Uint8Array(
+    4 + rows.reduce((total, [key, value]) => total + 8 + key.length + (value?.length ?? 0), 0),
+  );
+  const view = new DataView(packet.buffer);
+  view.setUint32(0, rows.length, true);
+  let cursor = 4;
+  for (const [key, value] of rows) {
+    view.setUint32(cursor, key.length, true);
+    view.setUint32(cursor + 4, value === null ? 0xffffffff : value.length, true);
+    cursor += 8;
+    packet.set(key, cursor);
+    cursor += key.length;
+    if (value !== null) {
+      packet.set(value, cursor);
+      cursor += value.length;
+    }
+  }
+  return packet;
+}
+
+function unpackSst(packet) {
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  const count = view.getUint32(0, true);
+  const rows = [];
+  let cursor = 4;
+  for (let index = 0; index < count; index++) {
+    const keyLength = view.getUint32(cursor, true);
+    const valueLength = view.getUint32(cursor + 4, true);
+    cursor += 8;
+    const key = packet.slice(cursor, cursor + keyLength);
+    cursor += keyLength;
+    const value = valueLength === 0xffffffff ? null : packet.slice(cursor, cursor + valueLength);
+    cursor += value?.length ?? 0;
+    rows.push([key, value]);
+  }
+  assert.equal(cursor, packet.length);
+  return rows;
+}
+
+const sstScan = (table, start, end, prefix, flags = 0, limit = 100) =>
+  unpackSst(table.scan(start, end, prefix, flags, limit));
+const sstRows = [
+  [bytes(), bytes()],
+  [bytes(0), bytes(4)],
+  [bytes(1), null],
+  [bytes(1, 0), bytes(5, 0)],
+  [bytes(255), null],
+  [bytes(255, 0), bytes(255)],
+];
+
+function savedSst() {
+  const adapter = new ByteAdapter();
+  close(WasmSst.create(adapter, packSst(sstRows)));
+  return adapter;
+}
+
+test("actual WASM SST creates native bytes, reopens binary values and distinguishes tombstones", () => {
+  const adapter = savedSst();
+  assert.equal(new TextDecoder().decode(adapter.bytes.subarray(0, 8)), "STOWSST\0");
+  assert.equal(new DataView(adapter.bytes.buffer).getUint32(8, true), 1);
+  assert.equal(adapter.syncs, 1);
+  const before = adapter.bytes.slice();
+  const table = new WasmSst(adapter);
+  assert.deepEqual(table.lookup(bytes()), bytes(2));
+  assert.deepEqual(table.lookup(bytes(0)), bytes(2, 4));
+  assert.deepEqual(table.lookup(bytes(1)), bytes(1));
+  assert.deepEqual(table.lookup(bytes(99)), bytes(0));
+  assert.deepEqual(sstScan(table), sstRows);
+  const copy = table.lookup(bytes(0));
+  copy.fill(8);
+  assert.deepEqual(table.lookup(bytes(0)), bytes(2, 4));
+  close(table);
+  assert.deepEqual(adapter.bytes, before);
+  assert.equal(adapter.syncs, 1);
+  assert.equal(adapter.truncations, 0);
+});
+
+test("actual WASM SST scans intersect indexed bounds, prefix and reverse including tombstones", () => {
+  const table = new WasmSst(savedSst());
+  assert.deepEqual(sstScan(table, bytes(0), bytes(255)), sstRows.slice(1, 4));
+  assert.deepEqual(sstScan(table, bytes(0), bytes(255), undefined, 3), sstRows.slice(2, 5));
+  assert.deepEqual(sstScan(table, undefined, undefined, bytes(1)), sstRows.slice(2, 4));
+  assert.deepEqual(
+    sstScan(table, undefined, undefined, bytes(255), 4),
+    sstRows.slice(4).toReversed(),
+  );
+  assert.deepEqual(
+    sstScan(table, undefined, undefined, bytes(), 4, 2),
+    sstRows.slice(-2).toReversed(),
+  );
+  assert.deepEqual(sstScan(table, bytes(1), bytes(1), undefined, 2), [sstRows[2]]);
+  assert.deepEqual(sstScan(table, bytes(1), bytes(1)), []);
+  assert.deepEqual(sstScan(table, bytes(255), undefined, bytes(0)), []);
+  close(table);
+});
+
+test("actual WASM SST preflights malformed packets without any adapter calls", () => {
+  const adapter = {};
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush"])
+    adapter[method] = () => assert.fail(`invalid packet performed ${method}`);
+  const valid = packSst([[bytes(1), bytes(2)]]);
+  const packets = [
+    bytes(),
+    bytes(0),
+    bytes(1, 0, 0, 0),
+    valid.subarray(0, valid.length - 1),
+    Uint8Array.from([...valid, 0]),
+    packSst([
+      [bytes(1), null],
+      [bytes(1), bytes()],
+    ]),
+    packSst([
+      [bytes(2), null],
+      [bytes(1), null],
+    ]),
+  ];
+  const badCount = bytes(65, 66, 15, 0); // 1,000,001 little endian.
+  packets.push(badCount);
+  const badKey = valid.slice();
+  new DataView(badKey.buffer).setUint32(4, 65537, true);
+  packets.push(badKey);
+  const badValue = valid.slice();
+  new DataView(badValue.buffer).setUint32(8, 16 * 1024 * 1024 + 1, true);
+  packets.push(badValue);
+  packets.push(new Uint8Array(32 * 1024 * 1024 + 1));
+  for (const packet of packets) assert.throws(() => WasmSst.create(adapter, packet), /SST/);
+});
+
+test("actual WASM SST preserves nonempty destination and rejects corrupt immutable data", () => {
+  const adapter = savedSst();
+  const before = adapter.bytes.slice();
+  assert.throws(() => WasmSst.create(adapter, packSst([])), /not empty/);
+  assert.deepEqual(adapter.bytes, before);
+  for (const offset of [0, 28, before.length - 1]) {
+    const bad = new ByteAdapter(before);
+    bad.bytes[offset] ^= 1;
+    const changed = bad.bytes.slice();
+    assert.throws(() => new WasmSst(bad), /SST/);
+    assert.deepEqual(bad.bytes, changed);
+    assert.equal(bad.writes, 0);
+  }
+  // Opening validates frame headers/index; payload CRC is validated on lookup.
+  const bad = new ByteAdapter(before);
+  bad.bytes[32 + 28] ^= 1;
+  const table = new WasmSst(bad);
+  assert.throws(() => table.lookup(bytes()), /checksum/);
+  close(table);
+});
+
+test("actual WASM SST creation propagates partial-write and flush failure without publication", () => {
+  const writeFailure = new ByteAdapter();
+  const original = writeFailure.writeAt.bind(writeFailure);
+  writeFailure.writeAt = (buffer, at) => {
+    if (at >= 9) throw new Error("injected SST write failure");
+    return original(buffer, at);
+  };
+  assert.throws(() => WasmSst.create(writeFailure, packSst(sstRows)), /injected SST write failure/);
+  assert(writeFailure.bytes.length > 0);
+  assert.equal(writeFailure.syncs, 0);
+  assert.throws(() => new WasmSst(writeFailure), /truncated/);
+  const flushFailure = new ByteAdapter();
+  flushFailure.flush = () => {
+    throw new Error("injected SST flush failure");
+  };
+  assert.throws(() => WasmSst.create(flushFailure, packSst(sstRows)), /injected SST flush failure/);
+  // A candidate can be complete despite its failed durability acknowledgement.
+  const reopened = new WasmSst(flushFailure);
+  assert.deepEqual(sstScan(reopened), sstRows);
+  close(reopened);
+});
+
+test("actual WASM SST validates scan and lookup before I/O, then rejects use after close", () => {
+  const adapter = savedSst();
+  const table = new WasmSst(adapter);
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush"])
+    adapter[method] = () => assert.fail(`empty/invalid scan performed ${method}`);
+  assert.deepEqual(sstScan(table, undefined, undefined, undefined, 0, 0), []);
+  assert.deepEqual(table.lookup(bytes(99)), bytes(0));
+  assert.throws(() => table.lookup(new Uint8Array(65537)), /65536/);
+  assert.throws(() => sstScan(table, bytes(2), bytes(1), undefined, 0, 0), /range/);
+  assert.throws(() => sstScan(table, undefined, undefined, undefined, 8, 0), /flags/);
+  assert.throws(() => sstScan(table, undefined, undefined, undefined, 0, 1001), /1000/);
+  for (let position = 0; position < 3; position++) {
+    const args = [undefined, undefined, undefined, 0, 0];
+    args[position] = new Uint8Array(65537);
+    assert.throws(() => sstScan(table, ...args), /65536/);
+  }
+  table.close();
+  table.close();
+  assert.throws(() => table.lookup(bytes()), /closed/);
+  assert.throws(() => sstScan(table, undefined, undefined, undefined, 0, 0), /closed/);
+  table.free();
+});
+
+test("actual WASM SST indexed scan reads selected records only", () => {
+  const adapter = savedSst();
+  const table = new WasmSst(adapter);
+  const offsets = [];
+  const original = adapter.readAt.bind(adapter);
+  adapter.readAt = (buffer, at) => {
+    offsets.push(at);
+    return original(buffer, at);
+  };
+  assert.deepEqual(sstScan(table, undefined, undefined, bytes(1), 4, 1), [sstRows[3]]);
+  assert(offsets.length > 0);
+  const index = new DataView(adapter.bytes.buffer).getBigUint64(20, true);
+  assert(offsets.every((at) => at >= 32 && at < Number(index)));
+  // Corrupt an unrelated earlier payload; indexed prefix scan must not read it.
+  adapter.bytes[32 + 28] ^= 1;
+  assert.deepEqual(sstScan(table, undefined, undefined, bytes(255)), sstRows.slice(4));
+  close(table);
+});
+
+test("actual WASM SST scan enforces exact packet byte and row boundaries", () => {
+  const value = new Uint8Array(16 * 1024 * 1024);
+  let adapter = new FullByteAdapter();
+  let table = WasmSst.create(
+    adapter,
+    packSst([
+      [bytes(0), value],
+      [bytes(1), value.subarray(0, value.length - 22)],
+    ]),
+  );
+  assert.equal(table.scan(undefined, undefined, undefined, 0, 1000).length, 32 * 1024 * 1024);
+  close(table);
+  // Build a larger native SST by extending the second record by one byte,
+  // independently updating native record/header CRCs and its index offset.
+  const native = adapter.bytes;
+  const oldView = new DataView(native.buffer);
+  const oldIndex = Number(oldView.getBigUint64(20, true));
+  const second = 32 + 28 + 1 + value.length + 4;
+  const expanded = new Uint8Array(native.length + 1);
+  const inserted = oldIndex - 4;
+  expanded.set(native.subarray(0, inserted));
+  expanded.set(native.subarray(inserted), inserted + 1);
+  const view = new DataView(expanded.buffer);
+  view.setUint32(second, view.getUint32(second, true) + 1, true);
+  view.setUint32(second + 20, view.getUint32(second + 20, true) + 1, true);
+  view.setUint32(second + 24, crc32(expanded.subarray(second, second + 24)), true);
+  view.setUint32(oldIndex - 3, crc32(expanded.subarray(second, oldIndex - 3)), true);
+  view.setBigUint64(20, BigInt(oldIndex + 1), true);
+  view.setUint32(28, crc32(expanded.subarray(0, 28)), true);
+  table = new WasmSst(new FullByteAdapter(expanded));
+  assert.equal(table.scan(undefined, undefined, undefined, 0, 1).length, 13 + value.length);
+  assert.throws(() => table.scan(undefined, undefined, undefined, 0, 2), /packet.*budget/);
+  close(table);
+  const rows = Array.from({ length: 1001 }, (_, i) => [
+    bytes(i >>> 8, i & 255),
+    i % 2 ? null : bytes(),
+  ]);
+  adapter = new FullByteAdapter();
+  table = WasmSst.create(adapter, packSst(rows));
+  assert.equal(sstScan(table, undefined, undefined, undefined, 0, 1000).length, 1000);
+  assert.deepEqual(sstScan(table, undefined, undefined, undefined, 4, 1)[0][1], rows.at(-1)[1]);
+  close(table);
 });
