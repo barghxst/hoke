@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stowtree — сторы и миграции</title>
+    <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      color-scheme: light dark;
+    }
+    body {
+      max-width: 760px;
+      margin: 48px auto;
+      padding: 0 20px;
+      line-height: 1.6;
+    }
+    h1 {
+      margin-bottom: 4px;
+    }
+    button,
+    select {
+      font: inherit;
+      padding: 8px 12px;
+      margin: 4px 4px 4px 0;
+    }
+    section {
+      border-top: 1px solid #8885;
+      padding: 18px 0;
+    }
+    pre {
+      overflow: auto;
+      padding: 16px;
+      background: #8881;
+    }
+    output {
+      display: block;
+      font-size: 32px;
+      font-weight: bold;
+    }
+    #error {
+      color: light-dark(#a11212, #ff9696);
+    }
+    #status:empty,
+    #error:empty {
+      display: none;
+    }
+    code {
+      font-family: monospace;
+    }
+    </style>
+  </head>
+  <body>
+    <h1>Stowtree</h1>
+    <p>
+      Настройки с сохранением, подписками и миграцией схемы. Данные остаются в localStorage этого
+      браузера.
+    </p>
+    <section>
+      <label for="theme">Тема</label>
+      <select id="theme">
+        <option value="system">Системная</option>
+        <option value="light">Светлая</option>
+        <option value="dark">Тёмная</option>
+      </select>
+      <output id="count" aria-live="polite">0</output>
+      <button id="increment" type="button">Добавить 1</button>
+      <button id="reset" type="button">Вернуть defaults</button>
+      <p id="status" role="status"></p>
+      <p id="error" role="alert"></p>
+    </section>
+    <section>
+      <h2>Проверка версий</h2>
+      <p>
+        Код приложения использует схему v2. Создайте тестовую v1, посмотрите запись ниже, затем
+        запустите миграцию отдельно.
+      </p>
+      <button id="legacy" type="button">1. Создать и показать v1</button>
+      <button id="migrate" type="button" disabled>2. Мигрировать v1 → v2</button>
+      <button id="future" type="button">Загрузить v3 → получить ошибку</button>
+      <button id="clear" type="button">Удалить данные демо</button>
+      <p>
+        При миграции <code>darkMode: true</code> превращается в <code>theme: "dark"</code>. Данные
+        v3 не открываются кодом v2 и остаются нетронутыми.
+      </p>
+    </section>
+    <section>
+      <h2>Сохранённая запись</h2>
+      <pre id="record">Запись отсутствует — используются defaults.</pre>
+      <p>
+        Измените настройки и перезагрузите страницу. Подписки работают внутри этого экземпляра KV;
+        события из других вкладок пока не подключены.
+      </p>
+    </section>
+    <script type="module">
+    import {
+      createKV,
+      createLocalStorage,
+      createStore,
+      defineStore,
+    } from "../../packages/stowtree/dist/kv/index.js";
+
+    const element = (id) => document.getElementById(id);
+    const controls = [element("theme"), element("increment"), element("reset")];
+    const migrate = element("migrate");
+    const scenarios = [element("legacy"), element("future"), element("clear")];
+    const definition = defineStore({
+      key: "settings",
+      version: 2,
+      defaults: () => ({ theme: "system", count: 0 }),
+      validate: (value) =>
+        value !== null &&
+        typeof value === "object" &&
+        ["system", "light", "dark"].includes(value.theme) &&
+        Number.isSafeInteger(value.count) &&
+        value.count >= 0,
+      migrations: {
+        2: (previous) => {
+          if (
+            previous === null ||
+            typeof previous !== "object" ||
+            typeof previous.darkMode !== "boolean" ||
+            !Number.isSafeInteger(previous.count) ||
+            previous.count < 0
+          ) {
+            throw new Error("Некорректные настройки v1");
+          }
+          return { theme: previous.darkMode ? "dark" : "light", count: previous.count };
+        },
+      },
+    });
+    let kv;
+    let store;
+    let unsubscribe = () => {};
+    function record() {
+      const raw = kv.get("settings");
+      element("record").textContent =
+        raw === undefined
+          ? "Запись отсутствует — используются defaults."
+          : JSON.stringify(raw, null, 2);
+    }
+    function attempt(action) {
+      element("error").textContent = "";
+      element("status").textContent = "";
+      try {
+        action();
+      } catch (error) {
+        element("error").textContent = `${error.code ?? "ERROR"}: ${error.message}`;
+      }
+    }
+    function render() {
+      const value = store.getSnapshot();
+      element("count").textContent = String(value.count);
+      element("theme").value = value.theme;
+      document.documentElement.style.colorScheme =
+        value.theme === "system" ? "light dark" : value.theme;
+      record();
+    }
+    function suspend() {
+      unsubscribe();
+      unsubscribe = () => {};
+      store = undefined;
+      migrate.disabled = true;
+      controls.forEach((control) => {
+        control.disabled = true;
+      });
+      element("count").textContent = "—";
+      element("theme").selectedIndex = -1;
+    }
+    function previewLegacy() {
+      suspend();
+      record();
+      migrate.disabled = false;
+      element("status").textContent =
+        "Сохранена v1 с darkMode: true. Миграция ещё не запускалась. Посмотрите запись ниже и нажмите «2. Мигрировать v1 → v2».";
+    }
+    function open() {
+      suspend();
+      record();
+      store = createStore(kv, definition);
+      unsubscribe = store.subscribe(render);
+      render();
+      controls.forEach((control) => {
+        control.disabled = false;
+      });
+    }
+    controls.forEach((control) => {
+      control.disabled = true;
+    });
+    scenarios.forEach((control) => {
+      control.disabled = true;
+    });
+    element("increment").addEventListener("click", () =>
+      attempt(() => store.update((value) => ({ ...value, count: value.count + 1 }))),
+    );
+    element("theme").addEventListener("change", () =>
+      attempt(() => store.update((value) => ({ ...value, theme: element("theme").value }))),
+    );
+    element("reset").addEventListener("click", () => attempt(() => store.reset()));
+    element("legacy").addEventListener("click", () =>
+      attempt(() => {
+        suspend();
+        kv.set("settings", { __stowtree: 1, version: 1, value: { darkMode: true, count: 7 } });
+        previewLegacy();
+      }),
+    );
+    migrate.addEventListener("click", () =>
+      attempt(() => {
+        open();
+        element("status").textContent = "Миграция v1 → v2 выполнена и сохранена.";
+      }),
+    );
+    element("future").addEventListener("click", () =>
+      attempt(() => {
+        unsubscribe();
+        kv.set("settings", { __stowtree: 1, version: 3, value: { theme: "dark", count: 99 } });
+        open();
+      }),
+    );
+    element("clear").addEventListener("click", () =>
+      attempt(() => {
+        unsubscribe();
+        kv.delete("settings");
+        open();
+        element("status").textContent = "Запись удалена. Используются defaults без записи на диск.";
+      }),
+    );
+    attempt(() => {
+      kv = createKV({
+        storage: createLocalStorage({ name: "store-demo", validate: (value) => true }),
+      });
+      scenarios.forEach((control) => {
+        control.disabled = false;
+      });
+      const raw = kv.get("settings");
+      if (raw !== null && typeof raw === "object" && raw.__stowtree === 1 && raw.version === 1) {
+        previewLegacy();
+      } else {
+        open();
+      }
+    });
+    </script>
+  </body>
+</html>

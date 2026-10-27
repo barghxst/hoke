@@ -1,0 +1,13 @@
+[package]
+name = "stowtree-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Experimental WAL and indexed sorted-run storage engines"
+
+[lints]
+workspace = true
+
+[dependencies]
+crc32fast = "1.5.3"

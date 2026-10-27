@@ -1,0 +1,31 @@
+{
+  "name": "stowtree-workspace",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "build": "pnpm --filter stowtree build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:package": "node scripts/package-smoke.mjs",
+    "check": "pnpm check:js && pnpm check:rust",
+    "format": "biome format --write .",
+    "lint": "biome check --error-on-warnings .",
+    "lint:fix": "biome check --write --error-on-warnings .",
+    "demo": "pnpm build && python3 -m http.server 8000 --bind 127.0.0.1",
+    "check:js": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm test:package",
+    "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
+    "format:rust": "cargo fmt --all"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@types/jsdom": "30.0.0",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "jsdom": "30.1.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

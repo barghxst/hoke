@@ -1,0 +1,32 @@
+{
+  "name": "stowtree",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "exports": {
+    "./kv": {
+      "types": "./dist/kv/index.d.ts",
+      "import": "./dist/kv/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "description": "Typed key-value storage with reactive, versioned stores for JavaScript and React.",
+  "peerDependencies": {
+    "react": ">=19.3.0 <20"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}
