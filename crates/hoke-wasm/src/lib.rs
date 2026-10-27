@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::io;
 use std::ops::Bound;
 
-use hoke_core::sstable::{Lookup, MAX_ENTRIES, SSTable, write_table};
+use hoke_core::sstable::{
+    Lookup, MAX_ENTRIES, MAX_MERGE_SOURCES, SSTable, merge_tables, write_table,
+};
 use hoke_core::storage::Storage;
 use hoke_core::{Engine, ScanOptions};
 use wasm_bindgen::prelude::*;
@@ -434,6 +436,29 @@ impl WasmSst {
         let entries = sst_entries(packet)?;
         let mut storage = JsStorage(adapter.unchecked_into());
         write_table(&mut storage, &entries).map_err(binding_error)?;
+        storage.flush().map_err(binding_error)?;
+        storage.sync_all().map_err(binding_error)?;
+        let table = SSTable::open(storage).map_err(binding_error)?;
+        Ok(Self { table: Some(table) })
+    }
+
+    /// Stream a candidate from immutable sources ordered oldest to newest.
+    /// All source indexes are opened before destination I/O; winning record CRCs
+    /// are checked during the merge. Errors can leave an unpublished candidate.
+    /// The caller must supply distinct destination/source files and close handles.
+    pub fn merge(destination: JsValue, sources: Vec<JsValue>) -> Result<WasmSst, JsError> {
+        if sources.len() > MAX_MERGE_SOURCES {
+            return Err(binding_error("too many SST merge sources (maximum 64)"));
+        }
+        let mut tables = Vec::new();
+        tables
+            .try_reserve_exact(sources.len())
+            .map_err(|_| binding_error("could not allocate SST merge sources"))?;
+        for source in sources {
+            tables.push(SSTable::open(JsStorage(source.unchecked_into())).map_err(binding_error)?);
+        }
+        let mut storage = JsStorage(destination.unchecked_into());
+        merge_tables(&mut storage, &mut tables).map_err(binding_error)?;
         storage.flush().map_err(binding_error)?;
         storage.sync_all().map_err(binding_error)?;
         let table = SSTable::open(storage).map_err(binding_error)?;

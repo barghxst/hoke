@@ -707,3 +707,159 @@ test("actual WASM SST scan enforces exact packet byte and row boundaries", () =>
   assert.deepEqual(sstScan(table, undefined, undefined, undefined, 4, 1)[0][1], rows.at(-1)[1]);
   close(table);
 });
+
+function mergeSource(rows) {
+  const adapter = new FullByteAdapter();
+  close(WasmSst.create(adapter, packSst(rows)));
+  return adapter;
+}
+
+test("actual WASM SST merge preserves newest values, tombstones, reinsertions and immutable sources", () => {
+  const sources = [
+    mergeSource([
+      [bytes(), bytes(7)],
+      [bytes(1), bytes(10)],
+      [bytes(2), bytes(20)],
+      [bytes(255), null],
+    ]),
+    mergeSource([
+      [bytes(), null],
+      [bytes(1), null],
+      [bytes(2), bytes(21)],
+    ]),
+    mergeSource([
+      [bytes(1), bytes()],
+      [bytes(3), null],
+    ]),
+  ];
+  const before = sources.map((source) => source.bytes.slice());
+  const syncs = sources.map((source) => source.syncs);
+  const destination = new ByteAdapter();
+  let table = WasmSst.merge(destination, sources);
+  const expected = [
+    [bytes(), null],
+    [bytes(1), bytes()],
+    [bytes(2), bytes(21)],
+    [bytes(3), null],
+    [bytes(255), null],
+  ];
+  assert.deepEqual(sstScan(table), expected);
+  assert.equal(destination.syncs, 1);
+  assert(destination.writes > 10); // Partial JS writes must still make a complete SST.
+  close(table);
+  table = new WasmSst(destination);
+  assert.deepEqual(sstScan(table), expected);
+  close(table);
+  for (const [index, source] of sources.entries()) {
+    assert.deepEqual(source.bytes, before[index]);
+    assert.equal(source.syncs, syncs[index]);
+    assert.equal(source.truncations, 0);
+  }
+});
+
+test("actual WASM SST merge rejects fan-in and opens all indexes before touching destination", () => {
+  const untouched = {};
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush", "close"])
+    untouched[method] = () => assert.fail(`preflight performed ${method}`);
+  assert.throws(() => WasmSst.merge(untouched, Array(65).fill(untouched)), /maximum 64/);
+  const source = savedSst();
+  const before = source.bytes.slice();
+  const corrupt = new ByteAdapter(before);
+  corrupt.bytes[0] ^= 1;
+  for (const invalid of [new ByteAdapter(), corrupt]) {
+    assert.throws(() => WasmSst.merge(untouched, [source, invalid]), /SST/);
+    assert.equal(invalid.writes, 0);
+  }
+  assert.deepEqual(source.bytes, before);
+  const occupied = savedSst();
+  const original = occupied.bytes.slice();
+  assert.throws(() => WasmSst.merge(occupied, [source]), /not empty/);
+  assert.deepEqual(occupied.bytes, original);
+  const destination = new ByteAdapter();
+  const table = WasmSst.merge(destination, Array(64).fill(source));
+  assert.deepEqual(sstScan(table), sstRows);
+  close(table);
+});
+
+test("actual WASM SST merge supports empty inputs and keeps handle ownership after close", () => {
+  const destination = new ByteAdapter();
+  const table = WasmSst.merge(destination, []);
+  assert.deepEqual(sstScan(table), []);
+  assert.equal(destination.syncs, 1);
+  table.close();
+  table.close();
+  assert.throws(() => table.lookup(bytes()), /closed/);
+  assert.throws(() => sstScan(table), /closed/);
+  table.free();
+  const reopened = new WasmSst(destination);
+  assert.deepEqual(sstScan(reopened), []);
+  close(reopened);
+});
+
+test("actual WASM SST merge propagates write/sync failure and keeps original sources readable", () => {
+  const source = savedSst();
+  const before = source.bytes.slice();
+  const partial = new ByteAdapter();
+  const original = partial.writeAt.bind(partial);
+  partial.writeAt = (buffer, at) => {
+    if (at >= 9) throw new Error("injected merge write failure");
+    return original(buffer, at);
+  };
+  assert.throws(() => WasmSst.merge(partial, [source]), /injected merge write failure/);
+  assert(partial.bytes.length > 0);
+  assert.equal(partial.syncs, 0);
+  const unsynced = new ByteAdapter();
+  unsynced.flush = () => {
+    throw new Error("injected merge sync failure");
+  };
+  assert.throws(() => WasmSst.merge(unsynced, [source]), /injected merge sync failure/);
+  const candidate = new WasmSst(unsynced);
+  assert.deepEqual(sstScan(candidate), sstRows);
+  close(candidate);
+  const originalTable = new WasmSst(source);
+  assert.deepEqual(sstScan(originalTable), sstRows);
+  close(originalTable);
+  assert.deepEqual(source.bytes, before);
+});
+
+test("actual WASM SST merge checks winning payload CRC while streaming without scrubbing shadowed values", () => {
+  const source = mergeSource([[bytes(1), bytes(9)]]);
+  source.bytes[32 + 28 + 1] ^= 1;
+  const destination = new ByteAdapter();
+  assert.throws(() => WasmSst.merge(destination, [source]), /checksum/);
+  assert(destination.bytes.length > 0); // Header was written; this is an orphan candidate.
+  assert.equal(destination.syncs, 0);
+  const newest = mergeSource([[bytes(1), null]]);
+  const valid = new ByteAdapter();
+  const table = WasmSst.merge(valid, [source, newest]);
+  assert.deepEqual(sstScan(table), [[bytes(1), null]]);
+  close(table);
+});
+
+test("actual WASM SST merge streams beyond scan row limits and the 32 MiB transfer packet budget", () => {
+  const rows = Array.from({ length: 1001 }, (_, i) => [bytes(i >>> 8, i & 255), null]);
+  const many = mergeSource(rows);
+  const large = new Uint8Array(16 * 1024 * 1024);
+  large[0] = 41;
+  large[large.length - 1] = 99;
+  // Each input fits the create packet budget; their merged output does not.
+  const left = mergeSource([[bytes(250), large]]);
+  const right = mergeSource([[bytes(251), large]]);
+  const destination = new FullByteAdapter();
+  let table = WasmSst.merge(destination, [many, left, right]);
+  assert(destination.bytes.length > 32 * 1024 * 1024);
+  assert.equal(destination.syncs, 1);
+  assert.equal(sstScan(table, undefined, undefined, undefined, 0, 1000).length, 1000);
+  assert.deepEqual(sstScan(table, bytes(3, 232), bytes(250)), [[rows.at(-1)[0], null]]);
+  assert.throws(() => table.scan(bytes(250), undefined, undefined, 0, 2), /packet.*budget/);
+  close(table);
+  table = new WasmSst(destination);
+  for (const key of [bytes(250), bytes(251)]) {
+    const value = table.lookup(key);
+    assert.equal(value.length, large.length + 1);
+    assert.equal(value[0], 2);
+    assert.equal(value[1], 41);
+    assert.equal(value.at(-1), 99);
+  }
+  close(table);
+});
