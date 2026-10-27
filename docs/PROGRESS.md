@@ -291,3 +291,9 @@ C3 не завершает C: browser SST publication/compaction, atomic batch �
 - [x] ADR0017 описывает порядок источников, live lifetime, бюджеты, ошибки и отсутствие publication. Durable formats и публичный hoke/db API не менялись.
 
 Код фиксируется отдельными локальными коммитами пользователя без push и assistant attribution. OpenDB остаётся WAL-only до включения container coordinator; закрытие read view не затрагивает текущий WAL.
+
+## Выбрано направление контейнерного backend
+
+27 октября пользователь явно выбрал один OPFS-контейнер с журналом commit (вариант B ADR0014). Новый долговременный container format разрешён; повторное согласование направления не нужно. Следующий рабочий срез: зафиксировать точные header/record/root bytes, caps и recovery, затем реализовать append-only journal поверх Storage. Code first, затем fault/integration проверки целого среза.
+
+Это выбор будущего backend, не заявление о готовой реализации: openDB сейчас WAL-only. SST/WAL payload codecs переиспользуются; root/container bytes будут новыми. Первоначальное создание имени, eviction/power loss и reclaim остаются явно ограниченными. Старый OPFS WAL не переписывается и не удаляется: перенос будет явным в новый namespace/имя с сохранением source. Destructive GC и автоматическая миграция не включаются.

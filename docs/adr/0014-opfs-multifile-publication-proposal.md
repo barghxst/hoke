@@ -1,6 +1,6 @@
 # ADR 0014: предложение о публикации browser SST и compaction
 
-Статус: **предложено, не принято**. Дата проверки API: 27 октября 2026. Это исследование и проект проверок; новый backend, формат файлов и миграция не реализованы. Действующие ADR0003/0010 и `mode: "wal-v1"` остаются в силе.
+Статус: **пользователь выбрал направление B — один контейнер с журналом commit**, 27 октября 2026. Сравнение ниже сохраняется как обоснование. Выбор разрешает проектирование и реализацию нового container format; точные bytes/framing/recovery фиксируются отдельным ADR до записи production backend. Контейнер, его подключение к openDB и миграция пока не реализованы. Действующие WAL v1 и `mode: "wal-v1"` остаются в силе.
 
 ## Задача и граница решения
 
@@ -36,15 +36,15 @@ Native `Directory` синхронно создаёт immutable SST и новый
 
 Это сохраняет bytes native formats, но **не выполняет контракт native Directory**, поскольку отсутствует его directory durability barrier. Даже сохранение прежних файлов не даёт разрешения молча выбрать старый manifest: он может не содержать последующие ACK. Реализация допустима лишь после явного определения более узкого browser crash-контракта и проверки платформ; destructive GC до этого запрещён. Наличие `move()` в одном Chrome недостаточно для выбора A.
 
-### B: рекомендуемое направление исследования полного backend
+### B: выбранное направление полного backend
 
-Рекомендация — отдельно обсудить container, прежде чем писать его. Все SST/WAL/commit records находятся в одном заранее открытом файле. Candidate immutable segments пишутся после подтверждённого конца; затем flush; затем append checksummed root record со списком segment offsets/lengths, generation и границей replay; затем flush; затем switch/ACK. До root publication прежний root и его диапазоны не меняются. Root record должен однозначно ограничивать целый batch; ACK отдельных его элементов нет.
+Пользователь выбрал container с журналом commit вместо отдельных SST/WAL/manifest. Все SST/WAL/commit records находятся в одном заранее открытом файле. Candidate immutable segments пишутся после подтверждённого конца; затем flush; затем append checksummed root record со списком segment offsets/lengths, generation и границей replay; затем flush; затем switch/ACK. До root publication прежний root и его диапазоны не меняются. Root record должен однозначно ограничивать целый batch; ACK отдельных его элементов нет.
 
 Точный layout/magic/version, framing, CRC coverage, числа/endianness, запись пустой базы и terminal marker **здесь не выбираются**. Предварительные инварианты: checked offsets и lengths; конечные caps до allocations; strictly increasing generations; bounded root count/size; ссылки только на полностью записанные допустимые segments; неизвестная версия — явная ошибка до записи. Полный corrupt record не трактуется как незавершённый хвост. CRC обнаруживает ошибки, но не доказывает атомарность arbitrary torn writes.
 
 Первый срез после принятия формата должен оставаться append-only: логическая compaction освобождает memtable и уменьшает число активных SST, однако **не уменьшает размер container**. Нельзя объявлять проблему disk growth решённой. Truncate/rewrite файла с подтверждёнными страницами или перенос в другой файл для reclamation требуют нового протокола. Для reclaim внутри файла понадобятся устойчивый root selection, защищённые ranges, журнал allocator и отдельный fault proof. Два mutable root slots сами по себе этого не доказывают: повреждение нового slot нельзя автоматически принять за разрешение откатить ACK.
 
-Это направление сохраняет один sync handle и явный file flush, но задаёт новый долговременный формат и затрагивает recovery. Рекомендация не является принятым решением.
+Это направление сохраняет один sync handle и явный file flush, но задаёт новый долговременный формат и затрагивает recovery. Направление B принято пользователем; конкретный layout и протокол восстановления ещё предстоит зафиксировать перед реализацией.
 
 ### C: безопасный промежуточный предел
 
@@ -85,9 +85,9 @@ Native `Directory` синхронно создаёт immutable SST и новый
 ## Последовательность следующей работы
 
 1. Зафиксировать API facts и ограничения этого предложения; текущие WAL v1 и C4 lifecycle развиваются независимо.
-2. Обсудить выбор A/B и заявляемую fault-модель. Для B отдельно принять bytes/framing/recovery/capacity ADR, для A — явный отказ от native Directory durability equivalence и поддерживаемые браузеры.
-3. До публичного API написать deterministic publication simulator и fault matrix с independent ACK ledger, включая неизвестный commit и последующий reopen/write/crash.
+2. Выбор B сделан пользователем. Следующий срез фиксирует bytes/framing/recovery/capacity ADR и реализует append-only container journal. Возвращаться за повторным разрешением на само направление или новый формат не требуется.
+3. По уточнению пользователя сначала реализовать связный код контейнера, затем интеграционно проверить fault matrix с independent ACK ledger, включая неизвестный commit и последующий reopen/write/crash. Отдельный simulator пока отложен.
 4. Реализовать выбранный experimental backend отдельно от WAL v1: сначала create/open/put/reopen и format rejection, затем flush/SST reads/scan, затем atomic batch и logical compaction. Не включать destructive GC или automatic migration по умолчанию.
 5. Прогнать реальные Chrome/Firefox/WebKit capabilities и engine tests отдельно; неподдерживаемая среда выдаёт явную ошибку. После fault/model/real-browser проверок обновить заявляемый контракт и benchmark. Space reclamation получает собственное решение и тесты.
 
-До шага2 разрешены исследования и тестовый simulator без durable implementation. Этот ADR не создаёт обязательства реализовать все варианты и не завершает этап C.
+Направление B разрешено для реализации после фиксации конкретного container codec/recovery контракта. Варианты A/C остаются историческими альтернативами; автоматического переключения на них нет. Этот ADR не завершает этап C.
