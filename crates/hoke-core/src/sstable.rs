@@ -1,4 +1,9 @@
-//! Immutable, indexed sorted runs. Publication and synchronization belong to Database.
+//! Immutable, indexed sorted runs shared by native and platform adapters.
+//!
+//! This module reads and writes the existing SST v1 format. It does not publish
+//! files or make them durable: callers must finish writing, flush and synchronize
+//! their storage, then publish the reference using their own commit protocol.
+//! Keep storage backing an open table immutable for the table's entire lifetime.
 use std::{collections::BTreeMap, error::Error, fmt, io, ops::Bound};
 
 use crate::{
@@ -9,9 +14,12 @@ use crate::{
 const HEADER_LEN: usize = 32;
 const MAGIC: &[u8; 8] = b"STOWSST\0";
 const VERSION: u32 = 1;
-pub(crate) const MAX_ENTRIES: usize = 1_000_000;
-pub(crate) const MAX_INDEX_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum number of records, including tombstones, in one table.
+pub const MAX_ENTRIES: usize = 1_000_000;
+/// Maximum encoded key-index size, excluding its trailing checksum.
+pub const MAX_INDEX_BYTES: usize = 64 * 1024 * 1024;
 
+/// Storage, validation, allocation, or record-codec failure.
 #[derive(Debug)]
 pub enum SstError {
     Io(io::Error),
@@ -48,10 +56,14 @@ impl From<wal::CodecError> for SstError {
     }
 }
 
+/// Result of a lookup within a single immutable table.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Lookup {
+pub enum Lookup {
+    /// The key does not occur in this table.
     Missing,
+    /// The table contains a tombstone; older tables must not supply a value.
     Deleted,
+    /// An independently owned value read and validated from the table.
     Value(Vec<u8>),
 }
 struct Entry {
@@ -59,7 +71,12 @@ struct Entry {
     offset: u64,
     frame_len: usize,
 }
-pub(crate) struct SSTable<S: Storage> {
+/// Immutable table reader owning its storage handle and bounded in-memory index.
+///
+/// The caller must prevent writes through other handles while this reader exists.
+/// Opening validates the header, index, and record headers; payload checksums are
+/// validated lazily by [`SSTable::get`], not by a full-table scrub at open time.
+pub struct SSTable<S: Storage> {
     storage: S,
     index: Vec<Entry>,
     has_tombstones: bool,
@@ -115,8 +132,12 @@ fn header(count: usize, index_offset: u64) -> [u8; HEADER_LEN] {
     bytes
 }
 
-/// Write to an empty destination. The caller must flush/sync before publication.
-pub(crate) fn write_table<S: Storage>(
+/// Write sorted entries to an empty destination, with `None` encoding a tombstone.
+///
+/// Input sizes are checked before the first write. An I/O error can leave a partial
+/// file, which must not be published. Success does not flush or synchronize storage;
+/// the caller must do so before publishing its reference.
+pub fn write_table<S: Storage>(
     storage: &mut S,
     entries: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 ) -> Result<(), SstError> {
@@ -132,10 +153,11 @@ pub(crate) fn write_table<S: Storage>(
     Ok(())
 }
 
-// Pure preflight lets atomic batch reject capacity errors before file creation.
-pub(crate) fn validate_entries(
-    entries: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-) -> Result<(), SstError> {
+/// Check record and index size limits without performing I/O.
+///
+/// This allows a caller to reject capacity errors before creating a candidate file.
+/// Ordering and uniqueness follow from the input's [`BTreeMap`] representation.
+pub fn validate_entries(entries: &BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), SstError> {
     if entries.len() > MAX_ENTRIES {
         return Err(SstError::Invalid("too many entries"));
     }
@@ -164,7 +186,7 @@ pub(crate) fn validate_entries(
 /// Stream an immutable run to a new file while retaining only its bounded key index.
 /// Any append error invalidates the writer; the partial file must not be published.
 /// The caller must flush/sync the completed file before publishing its reference.
-pub(crate) struct TableWriter<'a, S: Storage> {
+pub struct TableWriter<'a, S: Storage> {
     storage: &'a mut S,
     index: Vec<u8>,
     count: usize,
@@ -174,7 +196,9 @@ pub(crate) struct TableWriter<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> TableWriter<'a, S> {
-    pub(crate) fn new(storage: &'a mut S) -> Result<Self, SstError> {
+    /// Begin a table in empty storage without flushing or synchronizing it.
+    /// A failed initialization can leave a partial file; do not publish that file.
+    pub fn new(storage: &'a mut S) -> Result<Self, SstError> {
         if !storage.is_empty()? {
             return Err(SstError::Invalid("destination is not empty"));
         }
@@ -189,7 +213,9 @@ impl<'a, S: Storage> TableWriter<'a, S> {
         })
     }
 
-    pub(crate) fn append(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<(), SstError> {
+    /// Append one key in strictly increasing byte order, including tombstones.
+    /// Any error invalidates this writer; subsequent append/finish calls fail.
+    pub fn append(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<(), SstError> {
         if self.failed {
             return Err(SstError::Invalid("writer failed"));
         }
@@ -260,7 +286,9 @@ impl<'a, S: Storage> TableWriter<'a, S> {
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> Result<usize, SstError> {
+    /// Finish the index/header and return the record count without flush or sync.
+    /// On failure, discard the partial candidate rather than publishing it.
+    pub fn finish(self) -> Result<usize, SstError> {
         if self.failed {
             return Err(SstError::Invalid("writer failed"));
         }
@@ -278,7 +306,9 @@ impl<'a, S: Storage> TableWriter<'a, S> {
 }
 
 impl<S: Storage> SSTable<S> {
-    pub(crate) fn open(mut storage: S) -> Result<Self, SstError> {
+    /// Open and validate an existing immutable table, taking ownership of storage.
+    /// This does not create, repair, synchronize, or publish a table.
+    pub fn open(mut storage: S) -> Result<Self, SstError> {
         let file_len = storage.len()?;
         if file_len < (HEADER_LEN + 4) as u64 {
             return Err(SstError::Invalid("truncated header/index"));
@@ -376,18 +406,28 @@ impl<S: Storage> SSTable<S> {
         })
     }
 
+    /// Number of indexed records, including tombstones.
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    /// Whether the table contains no records, including tombstones.
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
     /// Whether validated record headers include any delete operations.
-    pub(crate) fn has_tombstones(&self) -> bool {
+    pub fn has_tombstones(&self) -> bool {
         self.has_tombstones
     }
 
     /// Borrow a key from the loaded index, including keys of tombstones.
-    pub(crate) fn key_at(&self, position: usize) -> Option<&[u8]> {
+    pub fn key_at(&self, position: usize) -> Option<&[u8]> {
         self.index.get(position).map(|entry| entry.key.as_slice())
     }
 
     /// Locate a range using index metadata only, without reading record frames.
-    pub(crate) fn range_positions(
+    pub fn range_positions(
         &self,
         start: &Bound<Vec<u8>>,
         end: &Bound<Vec<u8>>,
@@ -405,7 +445,9 @@ impl<S: Storage> SSTable<S> {
         start..end.max(start)
     }
 
-    pub(crate) fn get(&mut self, key: &[u8]) -> Result<Lookup, SstError> {
+    /// Read a key and validate its complete record checksum against the index.
+    /// A missing key requires no storage read; a returned value is an owned copy.
+    pub fn get(&mut self, key: &[u8]) -> Result<Lookup, SstError> {
         let position = match self
             .index
             .binary_search_by(|entry| entry.key.as_slice().cmp(key))

@@ -21,7 +21,7 @@ mod manifest;
 mod native_directory;
 mod options;
 mod scan;
-mod sstable;
+pub mod sstable;
 
 pub use batch::{BatchOperation, MAX_BATCH_BYTES, MAX_BATCH_OPERATIONS, validate_batch};
 pub use database::{
