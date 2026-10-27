@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::manifest::{self, Manifest};
-use crate::sstable::{self, Lookup, SSTable, SstError};
+use crate::sstable::{self, SSTable, SstError};
 use crate::storage::Storage;
 use crate::{Engine, Error};
 use std::collections::BTreeMap;
@@ -187,17 +187,7 @@ impl<D: Directory> Database<D> {
         }
     }
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, DbError> {
-        if let Some(value) = self.wal.lookup_change(key) {
-            return Ok(value.map(<[u8]>::to_vec));
-        }
-        for table in self.tables.iter_mut().rev() {
-            match table.get(key).map_err(DbError::Sst)? {
-                Lookup::Missing => {}
-                Lookup::Deleted => return Ok(None),
-                Lookup::Value(value) => return Ok(Some(value)),
-            }
-        }
-        Ok(None)
+        crate::read::get_from_sources(&self.wal, &mut self.tables, key)
     }
 
     /// Merge bounded keys across memtable and SSTs; read only winning values.

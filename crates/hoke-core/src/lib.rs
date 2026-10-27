@@ -20,6 +20,7 @@ mod manifest;
 #[cfg(not(target_family = "wasm"))]
 mod native_directory;
 mod options;
+pub mod read;
 mod scan;
 pub mod sstable;
 
