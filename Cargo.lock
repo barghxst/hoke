@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "stowtree-core"
+name = "hoke-core"
 version = "0.0.0"
 dependencies = [
  "crc32fast",

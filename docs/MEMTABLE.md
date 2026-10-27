@@ -9,12 +9,12 @@ Default по-прежнему manual: Database::open и CLI без --memtable-li
 В отдельном временном каталоге, каждый вызов — новый процесс:
 
 ```sh
-threshold_demo=$(mktemp -d /tmp/stowtree-threshold-demo.XXXXXX)
-cargo run -q -p stowtree-core -- --db "$threshold_demo" --memtable-limit 8 put a 1234
-cargo run -q -p stowtree-core -- --db "$threshold_demo" info
-cargo run -q -p stowtree-core -- --db "$threshold_demo" --memtable-limit 8 put b 5678
-cargo run -q -p stowtree-core -- --db "$threshold_demo" info
-cargo run -q -p stowtree-core -- --db "$threshold_demo" scan
+threshold_demo=$(mktemp -d /tmp/hoke-threshold-demo.XXXXXX)
+cargo run -q -p hoke-core -- --db "$threshold_demo" --memtable-limit 8 put a 1234
+cargo run -q -p hoke-core -- --db "$threshold_demo" info
+cargo run -q -p hoke-core -- --db "$threshold_demo" --memtable-limit 8 put b 5678
+cargo run -q -p hoke-core -- --db "$threshold_demo" info
+cargo run -q -p hoke-core -- --db "$threshold_demo" scan
 ```
 
 После первого put: memtable_entries=1, tables=0, memtable_bytes=5 (один byte ключа и четыре bytes значения). Перед вторым put размер стал бы 10 > 8: старые изменения автоматически уходят в SST. После второго put: memtable_entries=1, tables=1, memtable_bytes=5. Scan показывает a=1234 и b=5678 после reopen.
@@ -24,11 +24,11 @@ cargo run -q -p stowtree-core -- --db "$threshold_demo" scan
 Замена значения меньшим учитывает новый размер, а не сумму всех исторических append:
 
 ```sh
-cargo run -q -p stowtree-core -- --db "$threshold_demo" --memtable-limit 8 put b 0
-cargo run -q -p stowtree-core -- --db "$threshold_demo" info
-cargo run -q -p stowtree-core -- --db "$threshold_demo" --memtable-limit 8 delete a
-cargo run -q -p stowtree-core -- --db "$threshold_demo" get a
-cargo run -q -p stowtree-core -- --db "$threshold_demo" scan
+cargo run -q -p hoke-core -- --db "$threshold_demo" --memtable-limit 8 put b 0
+cargo run -q -p hoke-core -- --db "$threshold_demo" info
+cargo run -q -p hoke-core -- --db "$threshold_demo" --memtable-limit 8 delete a
+cargo run -q -p hoke-core -- --db "$threshold_demo" get a
+cargo run -q -p hoke-core -- --db "$threshold_demo" scan
 ```
 
 После замены b: memtable_bytes=2, tables=1. После delete a: memtable_bytes=3, get a=NOT_FOUND. Tombstone хранит ключ, чтобы старое значение из SST не вернулось.
@@ -36,7 +36,7 @@ cargo run -q -p stowtree-core -- --db "$threshold_demo" scan
 ## Rust API
 
 ```rust
-use stowtree_core::{Database, DatabaseOptions, NativeDirectory};
+use hoke_core::{Database, DatabaseOptions, NativeDirectory};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = DatabaseOptions {
@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     options.validate()?;
     let mut db = Database::open_with_options(
-        NativeDirectory::open("/tmp/stowtree-threshold-db")?, options,
+        NativeDirectory::open("/tmp/hoke-threshold-db")?, options,
     )?;
     db.put(b"theme", b"dark")?;
     println!("{} dirty payload bytes", db.stats().memtable_bytes);
@@ -77,9 +77,9 @@ None отключает payload-порог, Some(0) отклоняется. По
 ## Автоматические проверки
 
 ```sh
-cargo test -p stowtree-core --test threshold
-cargo test -p stowtree-core --test threshold_process
-cargo test -p stowtree-core --test cli_threshold
+cargo test -p hoke-core --test threshold
+cargo test -p hoke-core --test threshold_process
+cargo test -p hoke-core --test cli_threshold
 pnpm check
 ```
 

@@ -3,9 +3,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
 use std::rc::Rc;
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::Storage;
-use stowtree_core::{
+use hoke_core::directory::Directory;
+use hoke_core::storage::Storage;
+use hoke_core::{
     BatchOperation, Database, MAX_BATCH_BYTES, MAX_BATCH_OPERATIONS, ScanOptions, validate_batch,
 };
 
@@ -608,7 +608,7 @@ fn exhausted_generation_is_a_retryable_limit_without_poison() {
     directory.arm(None);
     assert!(matches!(
         db.write_batch(&operations()),
-        Err(stowtree_core::DbError::Limit(_))
+        Err(hoke_core::DbError::Limit(_))
     ));
     assert_eq!(directory.fault.borrow().operations, ["list"]);
     assert_eq!(

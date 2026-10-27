@@ -1,11 +1,11 @@
-# Как запускать и проверять Stowtree
+# Как запускать и проверять Hoke
 
 ## 1. Проверить проект целиком
 
 Для полной проверки нужны Node.js 24, pnpm 11.22.0 и Rust с rustfmt/Clippy (проверено на Rust 1.97.1, Linux). Все команды выполняются из корня репозитория. Только JS-часть можно проверить через pnpm check:js.
 
 ```sh
-cd /home/barghest/stowtree
+cd /home/barghest/hoke
 pnpm install --frozen-lockfile
 pnpm check
 ```
@@ -78,17 +78,17 @@ pnpm exec vitest # тесты в watch-режиме
 ## 5. Проверить Rust WAL в отдельных процессах
 
 ```sh
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal put theme dark
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal delete theme
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal put theme dark
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal delete theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
 ```
 
 По порядку: `OK put (synced)`, `value="dark"`, `OK delete (synced)`, `NOT_FOUND`. Каждый вызов заново открывает файл: второй и четвёртый читают состояние из журнала, а не память предыдущего процесса. В stderr выводятся количество восстановленных записей и число отброшенных байтов неполного хвоста. При повторении сценария WAL продолжает расти — compaction ещё нет.
 
 ```sh
 pnpm check:rust
-cargo test -p stowtree-core --test process -- --nocapture
+cargo test -p hoke-core --test process -- --nocapture
 ```
 
 Три process-сценария: второй процесс не может захватить lock; подтверждённая запись переживает kill; kill после частичной записи нового frame сохраняет предыдущие данные и допускает последующий append после recovery. Тестовый child_driver — вспомогательный entry point дочернего процесса. Эти проверки используют принудительное завершение процессов на Unix, а не потерю питания устройства.
@@ -97,28 +97,28 @@ WAL-only API пока доступен только в Rust. Установле�
 
 ## 6. Проверить SSTable и безопасный flush
 
-Для чистого сценария выберите новый каталог; команды ниже рассчитаны на первый запуск /tmp/stowtree-db. Не удаляйте существующую базу для повторения: можно выбрать другое имя каталога.
+Для чистого сценария выберите новый каталог; команды ниже рассчитаны на первый запуск /tmp/hoke-db. Не удаляйте существующую базу для повторения: можно выбрать другое имя каталога.
 
 ```sh
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db put theme dark
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db info
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db flush
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db get theme
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db put theme dark
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db info
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db flush
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db get theme
 ```
 
 До flush: memtable_entries=1, tables=0. После: memtable_entries=0, tables=1, wal_bytes=16. Get вернёт value="dark", хотя memtable уже пуста: значение прочитано из SST в новом процессе. В каталоге появились MANIFEST, LOCK и файлы .sst/.wal.
 
 ```sh
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db delete theme
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db flush
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db get theme
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db delete theme
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db flush
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db get theme
 ```
 
 Ожидается NOT_FOUND. Старая таблица всё ещё содержит theme, но tombstone в новой запрещает его возвращать. Повторный пустой flush не создаёт файлы или новые поколения. После flush суммарное место само не уменьшается: для old WAL/orphan cleanup и слияния SST выполните compact, см. раздел ниже.
 
 ```sh
-cargo test -p stowtree-core --test flush
-cargo test -p stowtree-core --test flush_process -- --nocapture
+cargo test -p hoke-core --test flush
+cargo test -p hoke-core --test flush_process -- --nocapture
 ```
 
 Fault harness проверяет каждый шаг flush, включая ошибку после видимой записи bytes, неизвестный исход rename, poisoned до reopen, missing references и модель из 200 операций. Process tests останавливают child до manifest rename и после rename перед directory sync; подтверждённые update/delete сохраняются в обоих случаях. Это проверки Linux/process crash, не физических отказов накопителя.
@@ -128,8 +128,8 @@ Fault harness проверяет каждый шаг flush, включая ош�
 Подробный сценарий с ключами user:1/user:2/user:3 и ожидаемой выдачей — [SCANS.md](SCANS.md). Он специально сочетает данные SST и memtable, перезапись и удаление: user:1 обновляется, user:2 скрывается tombstone, user:3 добавляется. Проверьте prefix, CLI range [start,end), reverse+limit и повторение после flush.
 
 ```sh
-cargo test -p stowtree-core --test scan
-cargo test -p stowtree-core --test scan_cli
+cargo test -p hoke-core --test scan
+cargo test -p hoke-core --test scan_cli
 ```
 
 По умолчанию scan возвращает до 100 живых ключей. Пустая выдача CLI печатается как EMPTY. limit0 не читает values при scan, но открытие базы в CLI всё равно проверяет manifest/индексы и восстанавливает WAL.

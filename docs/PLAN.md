@@ -1,6 +1,6 @@
-# Stowtree: план разработки и самостоятельной работы
+# Hoke: план разработки и самостоятельной работы
 
-Дата: 27 октября 2026. Имя npm-пакета: `stowtree`, импорты через `stowtree/kv`, `stowtree/react`, позже `stowtree/db`, `stowtree/testing`.
+Дата: 27 октября 2026. Имя npm-пакета: `hoke`, импорты через `hoke/kv`, `hoke/react`, позже `hoke/db`, `hoke/testing`.
 
 ## 1. Цель и критерий успеха
 
@@ -18,7 +18,7 @@
 Проверено перед составлением плана:
 
 - [x] pnpm workspace; TypeScript; Vitest.
-- [x] `stowtree/kv`: get/set/delete/subscribe.
+- [x] `hoke/kv`: get/set/delete/subscribe.
 - [x] KV в памяти и явный JSON-адаптер localStorage.
 - [x] Пространства ключей, runtime-валидация, ошибки с cause.
 - [x] Демонстрационный счётчик с сохранением и сбросом.
@@ -59,7 +59,7 @@
 ## 4. Организация репозитория
 
 ```text
-packages/stowtree/
+packages/hoke/
   src/kv/             # контракт, память, localStorage, затем MMKV
   src/store.ts        # описание стора, snapshots, версии, миграции
   src/react/          # useStore, useValue
@@ -67,9 +67,9 @@ packages/stowtree/
   src/testing/        # будущие публичные тестовые адаптеры
 examples/web/         # запускаемое демо
 crates/               # создаются на этапе Rust
-  stowtree-core/
-  stowtree-wasm/
-  stowtree-native/
+  hoke-core/
+  hoke-wasm/
+  hoke-native/
 docs/
   PLAN.md
   PROGRESS.md
@@ -144,7 +144,7 @@ store.subscribe(listener);
 
 ### A4. React
 
-- `stowtree/react`: `useValue(store)` и `useStore(store, selector, isEqual?)`.
+- `hoke/react`: `useValue(store)` и `useStore(store, selector, isEqual?)`.
 - useSyncExternalStore; стабильные snapshots, подписки и server snapshots.
 - По умолчанию сравнение результата селектора через Object.is.
 - Обновление невыбранного поля не перерисовывает потребителя.
@@ -256,7 +256,7 @@ store.subscribe(listener);
 
 ## 10. Этап F — testing, devtools, документация и измерения
 
-- `stowtree/testing`: in-memory backend, управляемые отказы, seed, сценарии восстановления для пользователей.
+- `hoke/testing`: in-memory backend, управляемые отказы, seed, сценарии восстановления для пользователей.
 - Devtools: ключи/диапазоны, уровни LSM, размер WAL/SST, compaction, события и ошибки; выключен по умолчанию.
 - Не показывать значения пользовательских данных в логах без явного включения.
 - Бенчмарки: размер данных, размеры ключей/значений, warm/cold, последовательные/случайные операции, scan, batch, recovery.

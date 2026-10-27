@@ -7,18 +7,18 @@
 Используйте новый каталог, чтобы ожидаемый результат не зависел от прошлых примеров:
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo put user:1 Alice
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo put user:2 Bob
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo flush
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo put user:1 Alicia
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo delete user:2
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo put user:3 Carol
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo put user:1 Alice
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo put user:2 Bob
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo flush
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo put user:1 Alicia
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo delete user:2
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo put user:3 Carol
 ```
 
 Теперь Alice/Bob лежат в SST, Alicia/удаление Bob/Carol — в memtable и WAL. Проверьте объединение:
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo prefix user:
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo prefix user:
 ```
 
 Ожидается ровно:
@@ -31,9 +31,9 @@ key="user:3", value="Carol"
 Alice не показывается второй раз, а Bob не возвращается из старого SST.
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo range user:1 user:3
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo prefix user: --reverse --limit 1
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo scan --limit 0
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo range user:1 user:3
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo prefix user: --reverse --limit 1
+cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo scan --limit 0
 ```
 
 Первая команда вернёт только user:1: CLI range — [start,end), правая граница исключена. Вторая — user:3 с Carol. Третья — EMPTY. После ещё одного flush те же запросы должны дать те же результаты, уже объединяя несколько SST.
@@ -44,7 +44,7 @@ cargo run -q -p stowtree-core -- --db /tmp/stowtree-scan-demo scan --limit 0
 
 ```rust
 use std::ops::Bound::{Excluded, Included};
-use stowtree_core::ScanOptions;
+use hoke_core::ScanOptions;
 
 // db: Database<NativeDirectory>, уже открыт.
 let rows = db.scan(ScanOptions {
@@ -89,8 +89,8 @@ Payload старой версии, скрытой новой версией/tomb
 ## Автоматические проверки
 
 ```sh
-cargo test -p stowtree-core --test scan
-cargo test -p stowtree-core --test scan_cli
+cargo test -p hoke-core --test scan
+cargo test -p hoke-core --test scan_cli
 pnpm check
 ```
 

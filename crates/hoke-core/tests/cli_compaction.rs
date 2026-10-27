@@ -8,7 +8,7 @@ struct TempDirectory(PathBuf);
 impl TempDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "stowtree-compaction-cli-{}-{}",
+            "hoke-compaction-cli-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -25,7 +25,7 @@ impl Drop for TempDirectory {
     }
 }
 fn invoke(path: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_stowtree"))
+    Command::new(env!("CARGO_BIN_EXE_hoke"))
         .arg("--db")
         .arg(path)
         .args(arguments)
@@ -122,7 +122,7 @@ fn compact_and_gc_reject_extra_arguments_and_legacy_mode_before_creating_files()
             assert!(!path.exists());
         }
         let legacy = directory.0.join("legacy.wal");
-        let output = Command::new(env!("CARGO_BIN_EXE_stowtree"))
+        let output = Command::new(env!("CARGO_BIN_EXE_hoke"))
             .arg(&legacy)
             .arg(command)
             .output()

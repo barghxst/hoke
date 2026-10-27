@@ -9,7 +9,7 @@ struct TempDirectory(PathBuf);
 impl TempDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "stowtree-threshold-cli-{}-{}",
+            "hoke-threshold-cli-{}-{}",
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
@@ -29,7 +29,7 @@ impl Drop for TempDirectory {
 }
 
 fn invoke(path: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_stowtree"))
+    Command::new(env!("CARGO_BIN_EXE_hoke"))
         .arg("--db")
         .arg(path)
         .args(arguments)
@@ -142,7 +142,7 @@ fn invalid_flags_fail_before_creating_or_modifying_files() {
         assert_eq!(snapshot(&existing), before);
     }
     let legacy = directory.0.join("legacy.wal");
-    let output = Command::new(env!("CARGO_BIN_EXE_stowtree"))
+    let output = Command::new(env!("CARGO_BIN_EXE_hoke"))
         .arg(&legacy)
         .args(["--memtable-limit", "4", "info"])
         .output()

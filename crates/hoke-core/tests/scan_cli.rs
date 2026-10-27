@@ -9,7 +9,7 @@ struct TempDirectory(PathBuf);
 impl TempDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "stowtree-scan-cli-{}-{}",
+            "hoke-scan-cli-{}-{}",
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
@@ -29,7 +29,7 @@ impl Drop for TempDirectory {
 }
 
 fn invoke(path: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_stowtree"))
+    Command::new(env!("CARGO_BIN_EXE_hoke"))
         .arg("--db")
         .arg(path)
         .args(arguments)
@@ -120,7 +120,7 @@ fn scans_are_rejected_in_legacy_wal_mode_without_creating_file() {
     let directory = TempDirectory::new();
     let path = directory.0.join("legacy.wal");
     for arguments in [vec!["scan"], vec!["prefix", "a"], vec!["range", "a", "z"]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_stowtree"))
+        let output = Command::new(env!("CARGO_BIN_EXE_hoke"))
             .arg(&path)
             .args(&arguments)
             .output()

@@ -142,7 +142,7 @@ mod tests {
         fn new() -> Self {
             loop {
                 let path = std::env::temp_dir().join(format!(
-                    "stowtree-directory-test-{}-{}",
+                    "hoke-directory-test-{}-{}",
                     std::process::id(),
                     NEXT.fetch_add(1, Ordering::Relaxed)
                 ));

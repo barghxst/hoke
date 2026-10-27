@@ -7,21 +7,21 @@ Compaction — ручное слияние всех активных SST и memt
 Из корня репозитория создайте отдельный временный каталог. Каждая команда ниже — новый процесс; после неё файлы открываются заново.
 
 ```sh
-compact_demo=$(mktemp -d /tmp/stowtree-compact-demo.XXXXXX)
-cargo run -q -p stowtree-core -- --db "$compact_demo" put theme light
-cargo run -q -p stowtree-core -- --db "$compact_demo" put old obsolete
-cargo run -q -p stowtree-core -- --db "$compact_demo" flush
-cargo run -q -p stowtree-core -- --db "$compact_demo" put theme dark
-cargo run -q -p stowtree-core -- --db "$compact_demo" delete old
-cargo run -q -p stowtree-core -- --db "$compact_demo" flush
-cargo run -q -p stowtree-core -- --db "$compact_demo" put newest unflushed
-cargo run -q -p stowtree-core -- --db "$compact_demo" info
+compact_demo=$(mktemp -d /tmp/hoke-compact-demo.XXXXXX)
+cargo run -q -p hoke-core -- --db "$compact_demo" put theme light
+cargo run -q -p hoke-core -- --db "$compact_demo" put old obsolete
+cargo run -q -p hoke-core -- --db "$compact_demo" flush
+cargo run -q -p hoke-core -- --db "$compact_demo" put theme dark
+cargo run -q -p hoke-core -- --db "$compact_demo" delete old
+cargo run -q -p hoke-core -- --db "$compact_demo" flush
+cargo run -q -p hoke-core -- --db "$compact_demo" put newest unflushed
+cargo run -q -p hoke-core -- --db "$compact_demo" info
 ls -l "$compact_demo"
-cargo run -q -p stowtree-core -- --db "$compact_demo" compact
-cargo run -q -p stowtree-core -- --db "$compact_demo" scan
-cargo run -q -p stowtree-core -- --db "$compact_demo" get old
+cargo run -q -p hoke-core -- --db "$compact_demo" compact
+cargo run -q -p hoke-core -- --db "$compact_demo" scan
+cargo run -q -p hoke-core -- --db "$compact_demo" get old
 ls -l "$compact_demo"
-cargo run -q -p stowtree-core -- --db "$compact_demo" gc
+cargo run -q -p hoke-core -- --db "$compact_demo" gc
 ```
 
 До compact: memtable_entries=1, tables=2. После: memtable_entries=0, tables=1, wal_bytes=16. Scan показывает newest=unflushed и theme=dark, get old — NOT_FOUND. В каталоге остаются LOCK, MANIFEST, один SST и один WAL. Повторный compact при одном SST без tombstones и пустой memtable только проверяет мусор и не создаёт поколение. gc после успешной очистки удаляет 0 файлов.
@@ -48,9 +48,9 @@ GC удаляет только строго распознанные obsolete g<
 Values передаются в writer по одному через heap merge; лимит обычного scan=100 не применяется. В памяти остаются исходные key indexes/memtable и индекс нового SST. На время операции требуется дополнительное место под полный живой результат. Один выходной SST ограничен 1M entries и 64 MiB index: сверх лимита compact возвращает ошибку без удаления исходных файлов. Фоновых потоков/автоматической compaction пока нет.
 
 ```sh
-cargo test -p stowtree-core --test compaction
-cargo test -p stowtree-core --test compaction_process
-cargo test -p stowtree-core --test cli_compaction
+cargo test -p hoke-core --test compaction
+cargo test -p hoke-core --test compaction_process
+cargo test -p hoke-core --test cli_compaction
 pnpm check
 ```
 

@@ -6,7 +6,7 @@ import {
   createLocalStorage,
   createStore,
   defineStore,
-} from "../../packages/stowtree/src/kv/index.js";
+} from "../../packages/hoke/src/kv/index.js";
 
 const html = readFileSync("examples/web/index.html", "utf8");
 const inline = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];

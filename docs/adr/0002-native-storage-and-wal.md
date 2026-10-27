@@ -10,7 +10,7 @@
 
 ## Что можно реализовать до выбора формата
 
-Cargo workspace и crate `stowtree-core`, без сторонних зависимостей. Синхронный Storage trait с явными offsets: len/is_empty, read_at, write_all_at, set_len, flush, sync_all. Адаптеры памяти и обычного файла выполняют одинаковый байтовый контракт.
+Cargo workspace и crate `hoke-core`, без сторонних зависимостей. Синхронный Storage trait с явными offsets: len/is_empty, read_at, write_all_at, set_len, flush, sync_all. Адаптеры памяти и обычного файла выполняют одинаковый байтовый контракт.
 
 - read_at разрешает короткое чтение; на EOF возвращает 0.
 - write_all_at либо записывает все байты, либо возвращает ошибку. Ошибка может оставить частичный префикс; автоматический rollback не обещается.

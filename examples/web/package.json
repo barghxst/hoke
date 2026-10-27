@@ -1,8 +1,8 @@
 {
-  "name": "stowtree-example-web",
+  "name": "hoke-example-web",
   "private": true,
   "type": "module",
   "dependencies": {
-    "stowtree": "workspace:*"
+    "hoke": "workspace:*"
   }
 }

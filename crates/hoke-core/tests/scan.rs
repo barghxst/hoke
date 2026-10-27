@@ -8,9 +8,9 @@ use std::ops::Bound::{Excluded, Included, Unbounded};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::{FileStorage, Storage};
-use stowtree_core::{Database, DbError, KeyValue, NativeDirectory, ScanOptions};
+use hoke_core::directory::Directory;
+use hoke_core::storage::{FileStorage, Storage};
+use hoke_core::{Database, DbError, KeyValue, NativeDirectory, ScanOptions};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);
@@ -18,7 +18,7 @@ impl Temp {
     fn new() -> Self {
         loop {
             let path = std::env::temp_dir().join(format!(
-                "stowtree-scan-test-{}-{}",
+                "hoke-scan-test-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));

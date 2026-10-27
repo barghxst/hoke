@@ -7,14 +7,14 @@ Payload threshold ограничивает текущую delta, но повто
 В отдельном временном каталоге:
 
 ```sh
-wal_demo=$(mktemp -d /tmp/stowtree-wal-limit-demo.XXXXXX)
-cargo run -q -p stowtree-core -- --db "$wal_demo" --wal-limit 90 put a 1234
-cargo run -q -p stowtree-core -- --db "$wal_demo" info
-cargo run -q -p stowtree-core -- --db "$wal_demo" --wal-limit 90 put a 5678
-cargo run -q -p stowtree-core -- --db "$wal_demo" info
-cargo run -q -p stowtree-core -- --db "$wal_demo" --wal-limit 90 put a 9999
-cargo run -q -p stowtree-core -- --db "$wal_demo" info
-cargo run -q -p stowtree-core -- --db "$wal_demo" get a
+wal_demo=$(mktemp -d /tmp/hoke-wal-limit-demo.XXXXXX)
+cargo run -q -p hoke-core -- --db "$wal_demo" --wal-limit 90 put a 1234
+cargo run -q -p hoke-core -- --db "$wal_demo" info
+cargo run -q -p hoke-core -- --db "$wal_demo" --wal-limit 90 put a 5678
+cargo run -q -p hoke-core -- --db "$wal_demo" info
+cargo run -q -p hoke-core -- --db "$wal_demo" --wal-limit 90 put a 9999
+cargo run -q -p hoke-core -- --db "$wal_demo" info
+cargo run -q -p hoke-core -- --db "$wal_demo" get a
 ```
 
 После каждого put memtable_entries=1 и memtable_bytes=5. При этом WAL меняется:
@@ -30,8 +30,8 @@ Header файла занимает16bytes, каждый из этих frames: he
 Порог относится к одному открытию, поэтому флаг повторяется в каждой write-команде. Его можно сочетать с payload threshold, порядок двух флагов свободный:
 
 ```sh
-cargo run -q -p stowtree-core -- --db "$wal_demo" --memtable-limit 8388608 --wal-limit 67108864 put theme dark
-cargo run -q -p stowtree-core -- --db "$wal_demo" --wal-limit 67108864 --memtable-limit 8388608 delete theme
+cargo run -q -p hoke-core -- --db "$wal_demo" --memtable-limit 8388608 --wal-limit 67108864 put theme dark
+cargo run -q -p hoke-core -- --db "$wal_demo" --wal-limit 67108864 --memtable-limit 8388608 delete theme
 ```
 
 При срабатывании любого условия выполняется один preflush. Оба флага находятся до команды, каждый максимум один раз. Минимум --wal-limit16, типu64. Invalid/missing/duplicate/negative/overflow значения проверяются до открытия каталога. Текст флагов в key/value — обычные литералы.
@@ -39,7 +39,7 @@ cargo run -q -p stowtree-core -- --db "$wal_demo" --wal-limit 67108864 --memtabl
 ## Rust API
 
 ```rust
-use stowtree_core::{Database, DatabaseOptions, NativeDirectory};
+use hoke_core::{Database, DatabaseOptions, NativeDirectory};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = DatabaseOptions {
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     options.validate()?;
     let mut db = Database::open_with_options(
-        NativeDirectory::open("/tmp/stowtree-wal-limit-db")?, options,
+        NativeDirectory::open("/tmp/hoke-wal-limit-db")?, options,
     )?;
     db.put(b"theme", b"dark")?;
     db.close()?;
@@ -69,9 +69,9 @@ None отключает соответствующее условие, default �
 ## Автоматические проверки
 
 ```sh
-cargo test -p stowtree-core --test wal_threshold
-cargo test -p stowtree-core --test wal_threshold_process
-cargo test -p stowtree-core --test cli_wal_threshold
+cargo test -p hoke-core --test wal_threshold
+cargo test -p hoke-core --test wal_threshold_process
+cargo test -p hoke-core --test cli_wal_threshold
 pnpm check
 ```
 

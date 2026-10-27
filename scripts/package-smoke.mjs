@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const directory = await mkdtemp(join(tmpdir(), "stowtree-package-"));
+const directory = await mkdtemp(join(tmpdir(), "hoke-package-"));
 function run(command, args, cwd = root) {
   try {
     return execFileSync(command, args, { cwd, encoding: "utf8", stdio: "pipe" });
@@ -18,7 +18,7 @@ function run(command, args, cwd = root) {
 }
 
 try {
-  run("pnpm", ["--dir", "packages/stowtree", "pack", "--pack-destination", directory]);
+  run("pnpm", ["--dir", "packages/hoke", "pack", "--pack-destination", directory]);
   const archive = (await readdir(directory)).find((name) => name.endsWith(".tgz"));
   assert(archive, "pnpm pack did not produce a tarball");
   const contents = run("tar", ["-tzf", join(directory, archive)]);
@@ -44,7 +44,7 @@ try {
   );
   const consumer = `
     import assert from 'node:assert/strict';
-    import { createKV, createStore, defineStore } from 'stowtree/kv';
+    import { createKV, createStore, defineStore } from 'hoke/kv';
     assert.equal(typeof globalThis.window, 'undefined');
     assert.throws(() => import.meta.resolve('react'), { code: 'ERR_MODULE_NOT_FOUND' });
     const kv = createKV();
@@ -72,7 +72,7 @@ try {
   await writeFile(
     join(directory, "consumer.ts"),
     `
-    import { createKV, createStore, defineStore } from 'stowtree/kv';
+    import { createKV, createStore, defineStore } from 'hoke/kv';
     const definition = defineStore({
       key: 'typed', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } =>
@@ -102,7 +102,7 @@ try {
   );
   run("pnpm", ["exec", "tsc", "-p", join(directory, "tsconfig.json")]);
   const packed = JSON.parse(
-    await readFile(join(directory, "node_modules/stowtree/package.json"), "utf8"),
+    await readFile(join(directory, "node_modules/hoke/package.json"), "utf8"),
   );
   assert.equal(packed.peerDependenciesMeta.react.optional, true);
 
@@ -127,8 +127,8 @@ try {
     import assert from 'node:assert/strict';
     import { createElement } from 'react';
     import { renderToString } from 'react-dom/server';
-    import { useValue, useStore } from 'stowtree/react';
-    import { createKV, createStore, defineStore } from 'stowtree/kv';
+    import { useValue, useStore } from 'hoke/react';
+    import { createKV, createStore, defineStore } from 'hoke/kv';
     const store = createStore(createKV(), defineStore({
       key: 'ssr', version: 1, defaults: () => 3,
       validate: (value) => typeof value === 'number',
@@ -141,8 +141,8 @@ try {
   await writeFile(
     join(directory, "consumer.ts"),
     `
-    import { createKV, createStore, defineStore } from 'stowtree/kv';
-    import { useValue, useStore } from 'stowtree/react';
+    import { createKV, createStore, defineStore } from 'hoke/kv';
+    import { useValue, useStore } from 'hoke/react';
     const store = createStore(createKV<unknown>(), defineStore({
       key: 'react-types', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } => typeof value === 'object' && value !== null && 'count' in value && typeof value.count === 'number',

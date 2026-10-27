@@ -1,13 +1,13 @@
-# stowtree-core
+# hoke-core
 
 Экспериментальный Rust-движок с бинарным WAL. Реализованы `Engine<S>`, `Storage`, файловый и volatile memory backend, put/get/delete, CRC32, replay и обработка неполного EOF append. WAL-only Engine хранит данные в памяти; Database добавляет SSTable, ручной или настраиваемый flush, scan, compaction и atomic batch.
 
 ```rust
-use stowtree_core::Engine;
-use stowtree_core::storage::FileStorage;
+use hoke_core::Engine;
+use hoke_core::storage::FileStorage;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Engine::open(FileStorage::open("/tmp/stowtree-example.wal")?)?;
+    let mut db = Engine::open(FileStorage::open("/tmp/hoke-example.wal")?)?;
     db.put(b"theme", b"dark")?;
     assert_eq!(db.get(b"theme"), Some(b"dark".as_slice()));
     db.close()?;
@@ -18,10 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Сценарий через CLI, каждый вызов — отдельный процесс:
 
 ```sh
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal put theme dark
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal delete theme
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal put theme dark
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal delete theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
 ```
 
 Ожидается: `OK put (synced)`, `value="dark"`, `OK delete (synced)`, `NOT_FOUND`. В stderr показаны replayed и discarded_tail_bytes. CLI принимает UTF-8 аргументы и показывает значения как строки для диагностики; Rust API принимает произвольные bytes.
@@ -35,10 +35,10 @@ cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
 ## Database: отдельный каталог с SST
 
 ```rust
-use stowtree_core::{Database, NativeDirectory};
+use hoke_core::{Database, NativeDirectory};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Database::open(NativeDirectory::open("/tmp/stowtree-db")?)?;
+    let mut db = Database::open(NativeDirectory::open("/tmp/hoke-db")?)?;
     db.put(b"theme", b"dark")?;
     db.flush()?;
     assert_eq!(db.stats().memtable_entries, 0);
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-CLI: `cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db put theme dark`, затем с тем же префиксом команды info, flush, get theme, delete theme. Отсутствующий каталог создаётся при существующем parent; непустой каталог без manifest не очищается и не переинициализируется. Это отдельный формат каталога, старый единичный WAL автоматически не переносится.
+CLI: `cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db put theme dark`, затем с тем же префиксом команды info, flush, get theme, delete theme. Отсутствующий каталог создаётся при существующем parent; непустой каталог без manifest не очищается и не переинициализируется. Это отдельный формат каталога, старый единичный WAL автоматически не переносится.
 
 FileStorage::open_existing не создаёт missing referenced file, create_new не перезаписывает существующий. NativeDirectory удерживает LOCK и выполняет directory sync на Unix. Database освобождает значения delta после flush, но индексы ключей SST остаются в памяти. Чтение SST может вернуть I/O/corruption error, поэтому get возвращает Result<Option<Vec<u8>>>. Полный CRC records проверяется лениво, а не scrub всех values на open.
 

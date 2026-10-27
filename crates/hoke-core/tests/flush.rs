@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
 use std::rc::Rc;
-use stowtree_core::Database;
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::Storage;
+use hoke_core::Database;
+use hoke_core::directory::Directory;
+use hoke_core::storage::Storage;
 
 type Bytes = Rc<RefCell<Vec<u8>>>;
 

@@ -43,7 +43,7 @@ importers:
     dependencies:
       stowtree:
         specifier: workspace:*
-        version: link:../../packages/stowtree
+        version: link:../../packages/hoke
 
   packages/stowtree:
     dependencies:

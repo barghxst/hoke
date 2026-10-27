@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
 use std::rc::Rc;
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::Storage;
-use stowtree_core::{BatchOperation, Database, DatabaseOptions, ScanOptions};
+use hoke_core::directory::Directory;
+use hoke_core::storage::Storage;
+use hoke_core::{BatchOperation, Database, DatabaseOptions, ScanOptions};
 
 type Bytes = Rc<RefCell<Vec<u8>>>;
 
@@ -180,174 +180,137 @@ impl Directory for SharedDir {
     }
 }
 
-fn options(wal: u64) -> DatabaseOptions {
+fn options(limit: usize) -> DatabaseOptions {
     DatabaseOptions {
-        max_memtable_bytes: None,
-        max_wal_bytes: Some(wal),
+        max_memtable_bytes: Some(limit),
+        ..Default::default()
     }
 }
 
-fn open(directory: &SharedDir, wal: u64) -> Database<SharedDir> {
-    Database::open_with_options(directory.clone(), options(wal)).unwrap()
+fn open(directory: &SharedDir, limit: usize) -> Database<SharedDir> {
+    Database::open_with_options(directory.clone(), options(limit)).unwrap()
 }
 
 #[test]
-fn equality_then_repeated_overwrite_flushes_constant_payload() {
+fn equality_stays_in_wal_and_next_write_preflushes() {
     let directory = SharedDir::default();
-    let mut db = open(&directory, 90);
-    db.put(b"a", b"1111").unwrap();
-    db.put(b"a", b"2222").unwrap();
-    assert_eq!(db.stats().wal_bytes, 90);
-    assert_eq!(db.stats().memtable_bytes, 5);
+    let mut db = open(&directory, 6);
+    db.put(b"a", b"12").unwrap();
+    db.put(b"b", b"34").unwrap();
+    assert_eq!(db.stats().memtable_bytes, 6);
     assert_eq!(db.stats().table_count, 0);
-    for i in 0..8 {
-        db.put(b"a", &[i; 4]).unwrap();
-        assert_eq!(db.stats().wal_bytes, if i % 2 == 0 { 53 } else { 90 });
-        assert_eq!(db.stats().table_count, 1 + i as usize / 2);
-        assert_eq!(db.stats().memtable_bytes, 5);
-        assert_eq!(db.get(b"a").unwrap(), Some(vec![i; 4]));
+    db.put(b"c", b"5").unwrap();
+    assert_eq!(db.stats().table_count, 1);
+    assert_eq!(db.stats().memtable_bytes, 2);
+    for (key, value) in [(b"a", b"12".as_slice()), (b"b", b"34"), (b"c", b"5")] {
+        assert_eq!(db.get(key).unwrap().as_deref(), Some(value));
     }
 }
 
 #[test]
-fn minimum_threshold_counts_empty_put_and_repeated_tombstones() {
+fn accounting_tracks_overwrites_deletes_and_binary_empty_keys() {
     let directory = SharedDir::default();
-    let mut db = open(&directory, 16);
-    db.put(b"", b"").unwrap();
-    assert_eq!(db.stats().wal_bytes, 48);
+    let mut db = open(&directory, 20);
+    db.put(b"x", &[1; 30]).unwrap();
+    assert_eq!(db.stats().memtable_bytes, 31);
     assert_eq!(db.stats().table_count, 0);
-    assert_eq!(db.stats().memtable_bytes, 0);
-    db.delete(b"").unwrap();
-    assert_eq!(db.stats().table_count, 1);
-    assert_eq!(db.stats().wal_bytes, 48);
-    assert_eq!(db.stats().memtable_bytes, 0);
-    db.delete(b"").unwrap();
-    assert_eq!(db.stats().table_count, 2);
-    assert_eq!(db.get(b"").unwrap(), None);
-    db.put(b"", b"large").unwrap();
-    assert_eq!(db.stats().table_count, 3);
-    assert_eq!(db.stats().wal_bytes, 53);
-    db.flush().unwrap();
-    assert_eq!(db.stats().wal_bytes, 16);
-}
-
-#[test]
-fn delete_equality_and_next_delete_are_measured_as_records() {
-    let directory = SharedDir::default();
-    let mut db = open(&directory, 82);
-    db.delete(b"a").unwrap();
-    db.delete(b"a").unwrap();
-    assert_eq!(db.stats().wal_bytes, 82);
+    db.put(b"x", b"12").unwrap();
+    assert_eq!(db.stats().memtable_bytes, 3);
     assert_eq!(db.stats().table_count, 0);
-    db.delete(b"a").unwrap();
-    assert_eq!(db.stats().wal_bytes, 49);
-    assert_eq!(db.stats().table_count, 1);
+    db.delete(b"x").unwrap();
     assert_eq!(db.stats().memtable_bytes, 1);
+    db.delete(b"x").unwrap();
+    assert_eq!(db.stats().memtable_bytes, 1);
+    db.put(b"", b"123").unwrap();
+    db.put(&[0, 255], &[0]).unwrap();
+    assert_eq!(db.stats().memtable_bytes, 7);
+    db.delete(b"").unwrap();
+    assert_eq!(db.stats().memtable_bytes, 4);
+    db.flush().unwrap();
+    assert_eq!(db.stats().memtable_bytes, 0);
+    db.delete(b"never-present").unwrap();
+    assert_eq!(db.stats().memtable_bytes, 13);
 }
 
 #[test]
-fn both_thresholds_trigger_only_one_flush() {
+fn nonempty_zero_byte_tombstone_still_preflushes() {
     let directory = SharedDir::default();
-    let mut db = Database::open_with_options(
-        directory.clone(),
-        DatabaseOptions {
-            max_memtable_bytes: Some(5),
-            max_wal_bytes: Some(53),
-        },
-    )
-    .unwrap();
-    db.put(b"a", b"1111").unwrap();
-    directory.arm(None);
-    db.put(b"b", b"2222").unwrap();
+    let mut db = open(&directory, 1);
+    db.delete(b"").unwrap();
+    assert_eq!(db.stats().memtable_bytes, 0);
+    db.put(b"a", b"b").unwrap();
     assert_eq!(db.stats().table_count, 1);
-    assert_eq!(db.stats().wal_bytes, 53);
-    assert_eq!(
-        directory
-            .fault
-            .borrow()
-            .operations
-            .iter()
-            .filter(|op| op.starts_with("rename "))
-            .count(),
-        1
-    );
-    assert_eq!(db.get(b"a").unwrap(), Some(b"1111".to_vec()));
-    assert_eq!(db.get(b"b").unwrap(), Some(b"2222".to_vec()));
+    assert_eq!(db.stats().memtable_bytes, 2);
 }
 
 #[test]
-fn recovered_length_is_used_but_open_read_close_and_empty_batch_do_not_flush() {
+fn reopen_counts_recovered_delta_without_flushing_until_next_mutation() {
     let directory = SharedDir::default();
     let mut db = Database::open(directory.clone()).unwrap();
-    for _ in 0..6 {
-        db.put(b"a", b"1111").unwrap();
-    }
+    db.put(b"long", b"value").unwrap();
+    db.put(b"x", b"old").unwrap();
+    db.delete(b"x").unwrap();
+    db.delete(b"").unwrap();
     db.close().unwrap();
-    let mut db = open(&directory, 16);
-    assert_eq!(db.stats().wal_bytes, 238);
+    let mut db = open(&directory, 2);
+    assert_eq!(db.stats().memtable_bytes, 10);
     assert_eq!(db.stats().table_count, 0);
-    db.get(b"a").unwrap();
-    db.scan(ScanOptions::default()).unwrap();
-    directory.arm(None);
-    db.write_batch(&[]).unwrap();
-    assert!(directory.fault.borrow().operations.is_empty());
-    db.close().unwrap();
-    let mut db = open(&directory, 16);
+    assert_eq!(db.get(b"long").unwrap(), Some(b"value".to_vec()));
+    assert_eq!(db.scan(ScanOptions::default()).unwrap().len(), 1);
     assert_eq!(db.stats().table_count, 0);
-    db.put(b"a", b"2222").unwrap();
+    db.put(b"n", b"v").unwrap();
     assert_eq!(db.stats().table_count, 1);
-    assert_eq!(db.stats().wal_bytes, 53);
+    assert_eq!(db.stats().memtable_bytes, 2);
 }
 
 #[test]
-fn default_and_maximum_threshold_leave_overwrite_wal_unflushed() {
-    assert_eq!(DatabaseOptions::default().max_wal_bytes, None);
-    for option in [DatabaseOptions::default(), options(u64::MAX)] {
-        let directory = SharedDir::default();
-        let mut db = Database::open_with_options(directory, option).unwrap();
-        for _ in 0..9 {
-            db.put(b"a", b"1111").unwrap();
-        }
-        assert_eq!(db.stats().table_count, 0);
-        assert_eq!(db.stats().wal_bytes, 349);
-        assert_eq!(db.stats().memtable_bytes, 5);
-    }
-}
-
-#[test]
-fn invalid_options_and_inputs_do_not_touch_storage_or_poison_instance() {
-    for limit in [0, 1, 15] {
-        let directory = SharedDir::default();
-        assert!(options(limit).validate().is_err());
-        assert!(Database::open_with_options(directory.clone(), options(limit)).is_err());
-        assert!(directory.fault.borrow().operations.is_empty());
-        assert!(directory.files.borrow().is_empty());
-    }
+fn default_is_manual_and_invalid_options_touch_no_files() {
     let directory = SharedDir::default();
-    let mut db = open(&directory, 16);
-    db.put(b"a", b"ack").unwrap();
+    assert!(options(0).validate().is_err());
+    assert!(Database::open_with_options(directory.clone(), options(0)).is_err());
+    assert!(directory.fault.borrow().operations.is_empty());
+    assert!(directory.files.borrow().is_empty());
+    assert_eq!(DatabaseOptions::default().max_memtable_bytes, None);
+    let mut db = Database::open(directory).unwrap();
+    for _ in 0..5 {
+        db.put(b"key", &[1; 100]).unwrap();
+    }
+    assert_eq!(db.stats().table_count, 0);
+    assert_eq!(db.stats().memtable_bytes, 103);
+}
+
+#[test]
+fn invalid_input_is_rejected_before_preflush_without_poison() {
+    let directory = SharedDir::default();
+    let mut db = open(&directory, 1);
+    db.put(b"old", b"ack").unwrap();
     directory.arm(None);
-    assert!(db.put(&vec![0; 65537], b"x").is_err());
+    assert!(db.put(&vec![0; 65537], b"v").is_err());
     assert!(db.delete(&vec![0; 65537]).is_err());
     assert!(db.put(b"x", &vec![0; 16 * 1024 * 1024 + 1]).is_err());
     assert!(directory.fault.borrow().operations.is_empty());
-    db.put(b"a", b"next").unwrap();
-    assert_eq!(db.get(b"a").unwrap(), Some(b"next".to_vec()));
+    assert_eq!(db.stats().memtable_bytes, 6);
+    db.put(b"new", b"ok").unwrap();
+    assert_eq!(db.get(b"old").unwrap(), Some(b"ack".to_vec()));
 }
 
 #[test]
-fn batch_is_unsplit_and_starts_empty_wal() {
+fn empty_batch_does_not_flush_and_large_batch_is_not_split() {
     let directory = SharedDir::default();
-    let mut db = open(&directory, 16);
+    let mut db = open(&directory, 1);
     db.put(b"old", b"ack").unwrap();
+    directory.arm(None);
+    db.write_batch(&[]).unwrap();
+    assert!(directory.fault.borrow().operations.is_empty());
+    assert_eq!(db.stats().memtable_bytes, 6);
     db.write_batch(&[
         BatchOperation::Put {
             key: b"a".to_vec(),
-            value: vec![1; 200],
+            value: vec![1; 20],
         },
         BatchOperation::Put {
             key: b"b".to_vec(),
-            value: vec![2; 200],
+            value: vec![2; 20],
         },
         BatchOperation::Delete {
             key: b"old".to_vec(),
@@ -355,115 +318,75 @@ fn batch_is_unsplit_and_starts_empty_wal() {
     ])
     .unwrap();
     assert_eq!(db.stats().table_count, 1);
-    assert_eq!(db.stats().wal_bytes, 16);
-    assert_eq!(db.stats().memtable_entries, 0);
-    assert_eq!(db.get(b"a").unwrap(), Some(vec![1; 200]));
-    assert_eq!(db.get(b"b").unwrap(), Some(vec![2; 200]));
+    assert_eq!(db.stats().memtable_bytes, 0);
+    assert_eq!(db.get(b"a").unwrap(), Some(vec![1; 20]));
+    assert_eq!(db.get(b"b").unwrap(), Some(vec![2; 20]));
     assert_eq!(db.get(b"old").unwrap(), None);
-    db.close().unwrap();
-    let mut db = open(&directory, 16);
-    assert_eq!(db.get(b"a").unwrap(), Some(vec![1; 200]));
 }
 
-fn seed(directory: &SharedDir) -> Database<SharedDir> {
-    let mut db = open(directory, 90);
-    db.put(b"a", b"1111").unwrap();
-    db.put(b"a", b"2222").unwrap();
+fn preflush_seed(directory: &SharedDir) -> Database<SharedDir> {
+    let mut db = open(directory, 8);
+    db.put(b"old", b"ack").unwrap();
+    db.delete(b"x").unwrap();
     db
 }
 
 #[test]
-fn every_preflush_fault_preserves_latest_ack_and_excludes_requested_overwrite() {
+fn every_preflush_fault_preserves_acks_and_excludes_requested_operation() {
     let probe = SharedDir::default();
-    let mut db = seed(&probe);
+    let mut db = preflush_seed(&probe);
     probe.arm(None);
-    db.put(b"a", b"3333").unwrap();
+    db.put(b"new", b"value").unwrap();
     let operations = probe.fault.borrow().operations.clone();
-    let final_sync = operations
+    let publication_sync = operations
         .iter()
         .rposition(|op| op == "sync_directory")
-        .unwrap()
-        + 1;
-    for failure in 1..=final_sync {
+        .unwrap();
+    for failure in 1..=publication_sync + 1 {
         let directory = SharedDir::default();
-        let mut db = seed(&directory);
+        let mut db = preflush_seed(&directory);
         directory.arm(Some(failure));
         assert!(
-            db.put(b"a", b"3333").is_err(),
+            db.put(b"new", b"value").is_err(),
             "operation {failure}: {}",
             operations[failure - 1]
         );
         directory.arm(None);
-        assert_eq!(db.get(b"a").unwrap(), Some(b"2222".to_vec()));
-        assert!(db.put(b"a", b"forbidden").is_err());
+        assert_eq!(db.get(b"old").unwrap(), Some(b"ack".to_vec()));
+        assert_eq!(db.get(b"new").unwrap(), None);
+        assert!(db.put(b"forbidden", b"v").is_err());
         drop(db);
-        let mut recovered = open(&directory, 90);
-        assert_eq!(recovered.get(b"a").unwrap(), Some(b"2222".to_vec()));
-        recovered.put(b"a", b"4444").unwrap();
+        let mut recovered = open(&directory, 8);
+        assert_eq!(recovered.get(b"old").unwrap(), Some(b"ack".to_vec()));
+        assert_eq!(recovered.get(b"x").unwrap(), None);
+        assert_eq!(recovered.get(b"new").unwrap(), None);
+        recovered.put(b"after", b"recovery").unwrap();
     }
 }
 
 #[test]
-fn unknown_manifest_rename_does_not_append_new_overwrite() {
+fn rename_unknown_outcome_still_never_appends_requested_operation() {
     let directory = SharedDir::default();
-    let mut db = seed(&directory);
+    let mut db = preflush_seed(&directory);
     directory.arm(None);
     directory.fault.borrow_mut().rename_then_fail = true;
-    assert!(db.put(b"a", b"3333").is_err());
+    assert!(db.delete(b"old").is_ok()); // Shrinks below the threshold, so no flush.
+    db.put(b"old", b"ack").unwrap();
+    assert!(db.put(b"new", b"value").is_err());
     directory.arm(None);
-    assert_eq!(db.get(b"a").unwrap(), Some(b"2222".to_vec()));
-    assert!(db.delete(b"a").is_err());
     drop(db);
-    let mut recovered = open(&directory, 90);
-    assert_eq!(recovered.get(b"a").unwrap(), Some(b"2222".to_vec()));
+    let mut recovered = open(&directory, 8);
+    assert_eq!(recovered.get(b"old").unwrap(), Some(b"ack".to_vec()));
+    assert_eq!(recovered.get(b"new").unwrap(), None);
 }
 
 #[test]
-fn append_failure_after_preflush_retains_unknown_outcome_contract() {
-    let probe = SharedDir::default();
-    let mut db = seed(&probe);
-    probe.arm(None);
-    db.put(b"a", b"3333").unwrap();
-    let operations = probe.fault.borrow().operations.clone();
-    let append_write = operations
-        .iter()
-        .rposition(|op| op.starts_with("write "))
-        .unwrap()
-        + 1;
-    for write_then_fail in [false, true] {
-        let directory = SharedDir::default();
-        let mut db = seed(&directory);
-        directory.arm(Some(append_write));
-        directory.fault.borrow_mut().write_then_fail = write_then_fail;
-        assert!(db.put(b"a", b"3333").is_err());
-        directory.arm(None);
-        assert_eq!(db.stats().table_count, 1);
-        assert_eq!(db.get(b"a").unwrap(), Some(b"2222".to_vec()));
-        assert!(db.put(b"a", b"forbidden").is_err());
-        drop(db);
-        let mut recovered = open(&directory, 90);
-        assert_eq!(
-            recovered.get(b"a").unwrap(),
-            Some(if write_then_fail {
-                b"3333".to_vec()
-            } else {
-                b"2222".to_vec()
-            })
-        );
-    }
-}
-
-#[test]
-fn ordered_model_survives_both_thresholds_batch_and_maintenance() {
+fn ordered_model_survives_threshold_changes_and_maintenance() {
     let directory = SharedDir::default();
-    let make_options = |i: u16| DatabaseOptions {
-        max_memtable_bytes: Some(if i.is_multiple_of(2) { 19 } else { 45 }),
-        max_wal_bytes: Some(if i.is_multiple_of(3) { 90 } else { 160 }),
-    };
-    let mut db = Database::open_with_options(directory.clone(), make_options(0)).unwrap();
+    let mut db = open(&directory, 19);
     let mut model = BTreeMap::new();
-    for i in 0_u16..140 {
-        let key = vec![(i.wrapping_mul(17) % 23) as u8, 0, 255];
+    for i in 0_u16..180 {
+        let key = vec![(i.wrapping_mul(17) % 29) as u8, 0, 255];
         if i % 4 == 0 {
             db.delete(&key).unwrap();
             model.remove(&key);
@@ -472,17 +395,6 @@ fn ordered_model_survives_both_thresholds_batch_and_maintenance() {
             db.put(&key, &value).unwrap();
             model.insert(key, value);
         }
-        if i % 13 == 0 {
-            let key = vec![254, (i % 7) as u8];
-            let value = i.to_le_bytes().to_vec();
-            db.write_batch(&[BatchOperation::Put {
-                key: key.clone(),
-                value: value.clone(),
-            }])
-            .unwrap();
-            model.insert(key, value);
-            assert_eq!(db.stats().wal_bytes, 16);
-        }
         if i % 17 == 0 {
             db.flush().unwrap();
         }
@@ -490,11 +402,11 @@ fn ordered_model_survives_both_thresholds_batch_and_maintenance() {
             db.compact().unwrap();
         }
         if i % 23 == 0 {
-            assert!(db.collect_garbage().unwrap().errors.is_empty());
+            db.collect_garbage().unwrap();
         }
         if i % 19 == 0 {
             db.close().unwrap();
-            db = Database::open_with_options(directory.clone(), make_options(i)).unwrap();
+            db = open(&directory, if i % 2 == 0 { 7 } else { 45 });
         }
         let expected: Vec<_> = model
             .iter()
@@ -511,5 +423,51 @@ fn ordered_model_survives_both_thresholds_batch_and_maintenance() {
         for (key, value) in &model {
             assert_eq!(db.get(key).unwrap().as_ref(), Some(value));
         }
+    }
+}
+
+#[test]
+fn append_failure_after_preflush_preserves_published_data_and_unknown_outcome() {
+    let probe = SharedDir::default();
+    let mut db = preflush_seed(&probe);
+    probe.arm(None);
+    db.put(b"new", b"value").unwrap();
+    let operations = probe.fault.borrow().operations.clone();
+    let append_write = operations
+        .iter()
+        .rposition(|op| op.starts_with("write "))
+        .unwrap()
+        + 1;
+    assert!(
+        append_write
+            > operations
+                .iter()
+                .rposition(|op| op == "sync_directory")
+                .unwrap()
+                + 1
+    );
+    for after_write in [false, true] {
+        let directory = SharedDir::default();
+        let mut db = preflush_seed(&directory);
+        directory.arm(Some(append_write));
+        directory.fault.borrow_mut().write_then_fail = after_write;
+        assert!(db.put(b"new", b"value").is_err());
+        directory.arm(None);
+        assert_eq!(db.stats().table_count, 1);
+        assert_eq!(db.stats().memtable_bytes, 0);
+        assert_eq!(db.get(b"old").unwrap(), Some(b"ack".to_vec()));
+        assert_eq!(db.get(b"new").unwrap(), None);
+        assert!(db.delete(b"old").is_err());
+        drop(db);
+        let mut recovered = open(&directory, 8);
+        assert_eq!(recovered.get(b"old").unwrap(), Some(b"ack".to_vec()));
+        assert_eq!(
+            recovered.get(b"new").unwrap(),
+            if after_write {
+                Some(b"value".to_vec())
+            } else {
+                None
+            }
+        );
     }
 }

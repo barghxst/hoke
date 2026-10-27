@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use stowtree_core::Engine;
-use stowtree_core::storage::{FileStorage, Storage};
+use hoke_core::Engine;
+use hoke_core::storage::{FileStorage, Storage};
 
-const MODE: &str = "STOWTREE_PROCESS_TEST_MODE";
-const DIRECTORY: &str = "STOWTREE_PROCESS_TEST_DIRECTORY";
+const MODE: &str = "HOKE_PROCESS_TEST_MODE";
+const DIRECTORY: &str = "HOKE_PROCESS_TEST_DIRECTORY";
 const INTERRUPTED_BYTES: usize = 29;
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -24,7 +24,7 @@ impl TempDirectory {
     fn new() -> Self {
         loop {
             let path = std::env::temp_dir().join(format!(
-                "stowtree-process-test-{}-{}",
+                "hoke-process-test-{}-{}",
                 std::process::id(),
                 NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
             ));

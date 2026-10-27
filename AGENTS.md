@@ -1,6 +1,6 @@
-# Работа над Stowtree
+# Работа над Hoke
 
-Рабочая папка: `/home/barghest/stowtree`. Прежний путь `/home/barghest/larder` больше не существует.
+Рабочая папка: `/home/barghest/hoke`. Прежний путь `/home/barghest/larder` больше не существует.
 
 Перед продолжением прочитай `docs/PLAN.md`, `docs/PROGRESS.md` и относящиеся к задаче ADR.
 

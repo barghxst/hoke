@@ -1,8 +1,8 @@
-# stowtree
+# hoke
 
 Хранилище данных для веба и React Native: простой KV для настроек и будущая встроенная база на общем Rust-ядре.
 
-Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; JS API stowtree/db, WASM, React Native и devtools ещё не реализованы. Пакет не опубликован.
+Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; JS API hoke/db, WASM, React Native и devtools ещё не реализованы. Пакет не опубликован.
 
 [Подробный план](docs/PLAN.md) · [Ход работ](docs/PROGRESS.md) · [Решения по API](docs/adr/0001-store-and-react-contract.md) · [Changelog](CHANGELOG.md)
 
@@ -42,7 +42,7 @@ pnpm demo
 - **React-хук** подписывается на snapshot стора или результат селектора.
 
 ```ts
-import { createKV } from "stowtree/kv";
+import { createKV } from "hoke/kv";
 
 const kv = createKV<number>(); // отдельное хранилище в памяти
 const unsubscribe = kv.subscribe("count", () => console.log(kv.get("count")));
@@ -56,7 +56,7 @@ unsubscribe();
 ## Сторы и сохранение
 
 ```ts
-import { createKV, createLocalStorage, defineStore, createStore } from "stowtree/kv";
+import { createKV, createLocalStorage, defineStore, createStore } from "hoke/kv";
 
 type Settings = { theme: "system" | "light" | "dark"; count: number };
 const isSettings = (value: unknown): value is Settings =>
@@ -126,7 +126,7 @@ const migrated = createStore(kv, settingsV2);
 
 ```ts
 import { createElement } from "react";
-import { useStore, useValue } from "stowtree/react";
+import { useStore, useValue } from "hoke/react";
 
 function Counter() {
   const count = useStore(store, (settings) => settings.count);
@@ -149,7 +149,7 @@ function Counter() {
 
 Хуки используют useSyncExternalStore. Его требования к стабильным snapshots и SSR описаны в [документации React](https://react.dev/reference/react/useSyncExternalStore). getServerSnapshot отдаёт стабильные defaults; defaults на сервере и клиенте должны совпадать. Сохранённое значение появляется после hydration. В SSR создавайте memory KV на запрос; localStorage-адаптер открывайте только на клиенте.
 
-React — optional peer dependency. Импорт stowtree/kv не загружает React. Импорт stowtree/react требует React из приложения.
+React — optional peer dependency. Импорт hoke/kv не загружает React. Импорт hoke/react требует React из приложения.
 
 ## localStorage: ограничения и ошибки
 
@@ -178,18 +178,18 @@ StoreError.code: invalid-definition, invalid-defaults, invalid-envelope, invalid
 
 ## Rust: первый движок с WAL
 
-Это отдельный crate `stowtree-core`, ещё не подключённый к веб-демо. Он записывает операции в бинарный журнал, синхронизирует файл перед подтверждением и при открытии восстанавливает актуальные значения в память.
+Это отдельный crate `hoke-core`, ещё не подключённый к веб-демо. Он записывает операции в бинарный журнал, синхронизирует файл перед подтверждением и при открытии восстанавливает актуальные значения в память.
 
 ```sh
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal put theme dark
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal delete theme
-cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal put theme dark
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal delete theme
+cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
 ```
 
 Ожидаемый результат: OK put, value="dark", OK delete, NOT_FOUND. Каждый вызов запускает отдельный процесс, поэтому get читает восстановленные из WAL данные. Состояние recovery выводится в stderr.
 
-[Решение о WAL](docs/adr/0002-native-storage-and-wal.md) · [Бинарный формат](docs/WAL_FORMAT.md) · [Rust crate](crates/stowtree-core/README.md). CRC32 проверяет повреждения; неполный последний append удаляется, полная повреждённая запись вызывает ошибку без очистки файла. После I/O-ошибки записи движок требует reopen. Новые данные после ошибки могут оказаться на диске, даже если вызывающий код не получил успех.
+[Решение о WAL](docs/adr/0002-native-storage-and-wal.md) · [Бинарный формат](docs/WAL_FORMAT.md) · [Rust crate](crates/hoke-core/README.md). CRC32 проверяет повреждения; неполный последний append удаляется, полная повреждённая запись вызывает ошибку без очистки файла. После I/O-ошибки записи движок требует reopen. Новые данные после ошибки могут оказаться на диске, даже если вызывающий код не получил успех.
 
 Старый WAL-only Engine по-прежнему хранит данные в памяти. Для хранения значений в SST используйте Database/режим --db ниже. Интерактивные транзакции и JS API DB ещё предстоят. Process-kill тесты не доказывают устойчивость к потере питания; платформы кроме Linux пока не проверены.
 
@@ -198,10 +198,10 @@ cargo run -p stowtree-core --bin stowtree -- /tmp/stowtree-example.wal get theme
 Режим `--db` использует отдельный каталог. Старые команды с путём к одному WAL остаются прежними.
 
 ```sh
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db put theme dark
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db info
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db flush
-cargo run -p stowtree-core --bin stowtree -- --db /tmp/stowtree-db get theme
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db put theme dark
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db info
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db flush
+cargo run -p hoke-core --bin hoke -- --db /tmp/hoke-db get theme
 ```
 
 На новом каталоге info до flush покажет memtable_entries=1, tables=0. После flush: memtable_entries=0, tables=1, wal_bytes=16. Значение dark читается из SST после повторного открытия. Flush не является первой записью на диск: put уже синхронизирован через WAL; flush переносит delta в отсортированный файл и освобождает значения memtable.
@@ -213,9 +213,9 @@ Database читает сначала memtable, затем SST от новой к
 ## Rust: scan/range
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db scan --limit 10
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db prefix theme
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db range a z --reverse --limit 10
+cargo run -q -p hoke-core -- --db /tmp/hoke-db scan --limit 10
+cargo run -q -p hoke-core -- --db /tmp/hoke-db prefix theme
+cargo run -q -p hoke-core -- --db /tmp/hoke-db range a z --reverse --limit 10
 ```
 
 Scan сливает ключи memtable и SST, учитывает новые значения и tombstones. Values читаются только для выбранных версий. Default limit 100; Rust API поддерживает Included/Excluded с обеих сторон и пересечение с prefix. CLI range — [start,end). Форматы файлов не менялись, JS DB API пока не подключён. [Сценарий проверки с ожидаемым выводом](docs/SCANS.md).
@@ -223,8 +223,8 @@ Scan сливает ключи memtable и SST, учитывает новые з
 ## Rust: compaction и GC
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db compact
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db gc
+cargo run -q -p hoke-core -- --db /tmp/hoke-db compact
+cargo run -q -p hoke-core -- --db /tmp/hoke-db gc
 ```
 
 compact сливает SST и текущую memtable, сохраняет последние значения и удаляет покрытые tombstones. После durable manifest publication удаляются obsolete SST/WAL/orphans. gc повторяет только очистку. Ошибки cleanup показываются отдельно от публикации данных. Один выходной SST ограничен 1M ключей/64 MiB index; фоновой compaction нет. [Проверка и контракт ошибок](docs/COMPACTION.md).
@@ -232,8 +232,8 @@ compact сливает SST и текущую memtable, сохраняет пос
 ## Rust: atomic batch
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-batch-db batch put theme dark put count 7 delete old
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-batch-db scan
+cargo run -q -p hoke-core -- --db /tmp/hoke-batch-db batch put theme dark put count 7 delete old
+cargo run -q -p hoke-core -- --db /tmp/hoke-batch-db scan
 ```
 
 Database::write_batch применяет несколько put/delete целиком через публикацию manifest; операции с одинаковым ключом выполняются по порядку. Первый вариант создаёт новую SST и сбрасывает текущую WAL delta, сохраняя форматы v1. Максимум 1024 операции/32 MiB input. Это гарантия атомарности, ускорение массовых записей не заявляется. [Сценарий проверки, API и ошибки](docs/BATCHES.md).
@@ -241,8 +241,8 @@ Database::write_batch применяет несколько put/delete цели�
 ## Rust: порог memtable
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db --memtable-limit 8388608 put theme dark
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db info
+cargo run -q -p hoke-core -- --db /tmp/hoke-db --memtable-limit 8388608 put theme dark
+cargo run -q -p hoke-core -- --db /tmp/hoke-db info
 ```
 
 DatabaseOptions.max_memtable_bytes включает автоматический flush перед записью, которая превысит порог текущей delta. По умолчанию режим ручной. memtable_bytes считает key/value payload и tombstones, не всю память процесса или длину WAL; один большой record может превысить мягкий порог. [API и воспроизводимая проверка на маленьком пороге](docs/MEMTABLE.md).
@@ -250,7 +250,7 @@ DatabaseOptions.max_memtable_bytes включает автоматический
 ## Rust: порог активного WAL
 
 ```sh
-cargo run -q -p stowtree-core -- --db /tmp/stowtree-db --wal-limit 67108864 put theme dark
+cargo run -q -p hoke-core -- --db /tmp/hoke-db --wal-limit 67108864 put theme dark
 ```
 
 max_wal_bytes/--wal-limit проверяет длину журнала с новым frame перед append, поэтому срабатывает и при overwrite одного ключа. Можно одновременно задать --memtable-limit; любой порог вызывает один preflush. Default обоих None сохраняет ручной режим. Старые WAL/orphans не входят в этот лимит и удаляются явным gc/compact. [Проверка на WAL из 90 bytes](docs/WAL_THRESHOLD.md).

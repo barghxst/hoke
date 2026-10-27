@@ -4,8 +4,8 @@ use std::ops::Bound;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use stowtree_core::storage::FileStorage;
-use stowtree_core::{
+use hoke_core::storage::FileStorage;
+use hoke_core::{
     BatchOperation, CleanupReport, Database, DatabaseOptions, Engine, NativeDirectory, ScanOptions,
     validate_batch,
 };
@@ -307,7 +307,7 @@ fn main() -> ExitCode {
         Err(error) => {
             eprintln!("error: {error}");
             eprintln!(
-                "usage: stowtree <path> put <key> <value> | get <key> | delete <key> | info (directory mode: --db <path> [--memtable-limit N] [--wal-limit N] <command>; also supports batch (put <key> <value> | delete <key>)* | flush | compact | gc | scan | prefix <prefix> | range <start> <end>, with --reverse and --limit N)"
+                "usage: hoke <path> put <key> <value> | get <key> | delete <key> | info (directory mode: --db <path> [--memtable-limit N] [--wal-limit N] <command>; also supports batch (put <key> <value> | delete <key>)* | flush | compact | gc | scan | prefix <prefix> | range <start> <end>, with --reverse and --limit N)"
             );
             ExitCode::FAILURE
         }

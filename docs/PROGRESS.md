@@ -57,7 +57,7 @@
 ## Завершённый первый Rust-срез: B1–B2 / WAL-only прототип
 
 - [x] Пользователь выбрал бинарный WAL с CRC32 вместо JSON Lines или готового codec. ADR 0002 принят.
-- [x] Cargo workspace, stowtree-core, publish=false, unsafe_code=forbid.
+- [x] Cargo workspace, hoke-core, publish=false, unsafe_code=forbid.
 - [x] Storage trait, FileStorage с эксклюзивным lock, MemoryStorage.
 - [x] WAL v1: magic/version, CRC header и frame, limits до allocation, put/delete, sequence.
 - [x] Engine: open/put/get/delete/close, запись+flush+sync перед обновлением памяти, poisoned после I/O-ошибки mutation.
@@ -127,7 +127,7 @@
 
 Параллельные агенты реализовали streaming writer, безопасное удаление, integration/fault/model/process и CLI tests; root — Database publication/GC, общий merge visitor, ADR и документацию.
 
-Итоговая проверка этого среза: полный pnpm check прошёл — 115 JS и 121 Rust tests, Biome, build/typecheck, tarball, rustfmt и строгий Clippy. Ручной CLI smoke в отдельном временном каталоге: 2 SST → 1, удалено 5 obsolete files, theme=dark и newest=unflushed сохранились, get old=NOT_FOUND; повторный gc удалил 0. Пользовательский /tmp/stowtree-db не изменялся.
+Итоговая проверка этого среза: полный pnpm check прошёл — 115 JS и 121 Rust tests, Biome, build/typecheck, tarball, rustfmt и строгий Clippy. Ручной CLI smoke в отдельном временном каталоге: 2 SST → 1, удалено 5 obsolete files, theme=dark и newest=unflushed сохранились, get old=NOT_FOUND; повторный gc удалил 0. Пользовательский /tmp/hoke-db не изменялся.
 
 ## Текущий Rust-рубеж: B5 / atomic write batch
 
@@ -145,7 +145,7 @@
 
 Параллельные агенты реализовали fault/model/integration, process и CLI; root — Batch API/validation, повторное использование SST preflight/manifest publication, ADR, документацию и интеграцию.
 
-Итоговая проверка B5: полный pnpm check прошёл — 115 JS + 141 Rust tests, Biome, сборка/типы, tarball, rustfmt, строгий Clippy. Ручной CLI smoke в отдельном временном каталоге: batch из 3 операций, сохранение старой WAL delta, reopen scan/get, ошибка последнего аргумента с byte-for-byte сохранением файлов, compact и повторный gc. Read-only ревью не нашло дополнительных ошибок; generation overflow исправлен как retryable Limit без poison и покрыт тестом. Пользовательский каталог /tmp/stowtree-db не изменялся.
+Итоговая проверка B5: полный pnpm check прошёл — 115 JS + 141 Rust tests, Biome, сборка/типы, tarball, rustfmt, строгий Clippy. Ручной CLI smoke в отдельном временном каталоге: batch из 3 операций, сохранение старой WAL delta, reopen scan/get, ошибка последнего аргумента с byte-for-byte сохранением файлов, compact и повторный gc. Read-only ревью не нашло дополнительных ошибок; generation overflow исправлен как retryable Limit без poison и покрыт тестом. Пользовательский каталог /tmp/hoke-db не изменялся.
 
 ## Текущий Rust-рубеж: B3 / настраиваемый порог memtable
 
@@ -163,7 +163,7 @@
 
 Параллельные агенты реализовали Engine accounting, integration/model/fault/process и CLI; root — options/pre-write policy, ADR, документацию и интеграцию. Read-only ревью не выявило дополнительных ошибок.
 
-Итоговая проверка порога: полный pnpm check прошёл — 115 JS + 162 Rust tests, Biome, сборка/типы, tarball, rustfmt, строгий Clippy. Ручной CLI smoke в отдельном временном каталоге подтвердил 5 bytes delta до/после preflush при пороге 8, переход 0→1 SST, overwrite до2bytes, delete с tombstone до3bytes и корректный scan/get после каждого reopen. Файлы пользовательского /tmp/stowtree-db и имя проекта не менялись.
+Итоговая проверка порога: полный pnpm check прошёл — 115 JS + 162 Rust tests, Biome, сборка/типы, tarball, rustfmt, строгий Clippy. Ручной CLI smoke в отдельном временном каталоге подтвердил 5 bytes delta до/после preflush при пороге 8, переход 0→1 SST, overwrite до2bytes, delete с tombstone до3bytes и корректный scan/get после каждого reopen. Файлы пользовательского /tmp/hoke-db и имя проекта не менялись.
 
 ## Текущий Rust-рубеж: порог активного WAL
 

@@ -1,4 +1,4 @@
-//! Kill a real process around manifest publication, without running destructors.
+//! Kill a real process before/after atomic batch publication and after ACK.
 //! These checks exercise process crashes, not loss of power or filesystem caches.
 #![cfg(unix)]
 
@@ -12,12 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::FileStorage;
-use stowtree_core::{Database, DatabaseOptions, NativeDirectory};
+use hoke_core::directory::Directory;
+use hoke_core::storage::FileStorage;
+use hoke_core::{BatchOperation, Database, NativeDirectory};
 
-const MODE: &str = "STOWTREE_WAL_THRESHOLD_PROCESS_TEST_MODE";
-const ROOT: &str = "STOWTREE_WAL_THRESHOLD_PROCESS_TEST_ROOT";
+const MODE: &str = "HOKE_BATCH_PROCESS_TEST_MODE";
+const ROOT: &str = "HOKE_BATCH_PROCESS_TEST_ROOT";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct TempDirectory(PathBuf);
@@ -26,7 +26,7 @@ impl TempDirectory {
     fn new() -> Self {
         loop {
             let path = std::env::temp_dir().join(format!(
-                "stowtree-wal-threshold-process-test-{}-{}",
+                "hoke-batch-process-test-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
@@ -55,7 +55,7 @@ impl RunningChild {
     fn spawn(root: &TempDirectory, mode: &str) -> Self {
         Self(
             Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "wal_threshold_child_driver", "--nocapture"])
+                .args(["--exact", "batch_child_driver", "--nocapture"])
                 .env(MODE, mode)
                 .env(ROOT, &root.0)
                 .stdin(Stdio::null())
@@ -70,7 +70,7 @@ impl RunningChild {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = self.0.try_wait().unwrap() {
-                panic!("child exited before reaching manifest boundary: {status}");
+                panic!("child exited before reaching batch boundary: {status}");
             }
             if root.0.join("ready").is_file() {
                 return;
@@ -87,7 +87,7 @@ impl RunningChild {
             if let Some(status) = self.0.try_wait().unwrap() {
                 assert!(
                     !status.success(),
-                    "child must be killed before flush returns"
+                    "child must be killed at the requested batch boundary"
                 );
                 return;
             }
@@ -108,15 +108,17 @@ impl Drop for RunningChild {
 struct PausedPublication {
     directory: NativeDirectory,
     armed: Rc<Cell<bool>>,
-    pause_after_rename: bool,
+    mode: String,
     ready: PathBuf,
 }
 
 impl PausedPublication {
-    fn pause(&self) -> ! {
+    fn pause(&self, boundary: &str) -> ! {
         // The marker is outside the database and is emitted only after every
         // acknowledged mutation has returned successfully in the child driver.
-        fs::write(&self.ready, b"ready").unwrap();
+        let pending = self.ready.with_extension("pending");
+        fs::write(&pending, boundary).unwrap();
+        fs::rename(pending, &self.ready).unwrap();
         loop {
             thread::park();
         }
@@ -139,17 +141,15 @@ impl Directory for PausedPublication {
     }
 
     fn rename(&self, from: &str, to: &str) -> io::Result<()> {
-        if self.armed.get() {
+        if self.armed.get() && self.mode == "before" {
             assert_eq!(to, "MANIFEST");
-            if !self.pause_after_rename {
-                self.pause();
-            }
+            self.pause("before manifest rename");
         }
         self.directory.rename(from, to)?;
-        if self.armed.get() {
+        if self.armed.get() && self.mode == "after" {
             // Pause before returning to Database, hence before directory fsync
             // and switching the in-memory WAL/table handles.
-            self.pause();
+            self.pause("after manifest rename");
         }
         Ok(())
     }
@@ -160,60 +160,102 @@ impl Directory for PausedPublication {
 }
 
 #[test]
-fn wal_threshold_child_driver() {
+fn batch_child_driver() {
     let Some(mode) = std::env::var_os(MODE) else {
         return;
     };
     let root = PathBuf::from(std::env::var_os(ROOT).unwrap());
-    let pause_after_rename = match mode.to_str().unwrap() {
-        "before" => false,
-        "after" => true,
-        other => panic!("unknown process mode: {other}"),
-    };
+    let mode = mode.into_string().unwrap();
+    assert!(["before", "after", "ack"].contains(&mode.as_str()));
     let armed = Rc::new(Cell::new(false));
     let directory = PausedPublication {
         directory: NativeDirectory::open(root.join("database")).unwrap(),
         armed: Rc::clone(&armed),
-        pause_after_rename,
+        mode,
         ready: root.join("ready"),
     };
-    let mut database = Database::open_with_options(
-        directory,
-        DatabaseOptions {
-            max_memtable_bytes: None,
-            max_wal_bytes: Some(507),
-        },
-    )
-    .unwrap();
-    // Ten overwrites keep exactly one nine-byte payload, while their WAL
-    // frames accumulate. The additional acknowledged key and tombstone must
-    // survive either side of publication as well.
-    for index in 0..10 {
-        database
-            .put(b"updated", format!("{index:02}").as_bytes())
-            .unwrap();
-        assert_eq!(database.stats().memtable_bytes, 9);
-        assert_eq!(database.stats().table_count, 1);
-    }
-    database.put(b"inserted", b"ok").unwrap();
+    let mut database = Database::open(directory).unwrap();
+    database.put(b"updated", b"acknowledged update").unwrap();
     database.delete(b"deleted").unwrap();
-    assert_eq!(database.stats().wal_bytes, 507);
-    assert_eq!(database.stats().memtable_bytes, 26);
-    assert_eq!(database.stats().table_count, 1);
+    database
+        .put(b"inserted", b"acknowledged insertion")
+        .unwrap();
     armed.set(true);
-    // This frame would exceed 507, despite leaving payload size unchanged.
-    // Publication pauses before this particular overwrite is appended.
-    database.put(b"updated", b"10").unwrap();
-    panic!("threshold preflush unexpectedly returned instead of pausing");
+    database
+        .write_batch(&[
+            BatchOperation::Put {
+                key: b"updated".to_vec(),
+                value: b"batch value".to_vec(),
+            },
+            BatchOperation::Delete {
+                key: b"untouched".to_vec(),
+            },
+            BatchOperation::Put {
+                key: b"new".to_vec(),
+                value: b"superseded".to_vec(),
+            },
+            BatchOperation::Delete {
+                key: b"new".to_vec(),
+            },
+            BatchOperation::Put {
+                key: b"new".to_vec(),
+                value: b"last wins".to_vec(),
+            },
+        ])
+        .unwrap();
+    assert_eq!(std::env::var(MODE).unwrap(), "ack");
+    // Publication and write_batch's success acknowledgement precede this marker.
+    // Kill while Database still owns its locks and open files.
+    let pending = root.join("ready.pending");
+    fs::write(&pending, "acknowledged batch").unwrap();
+    fs::rename(pending, root.join("ready")).unwrap();
+    loop {
+        thread::park();
+    }
 }
 
-fn assert_committed(database: &mut Database<NativeDirectory>) {
-    assert_eq!(database.get(b"updated").unwrap(), Some(b"09".to_vec()));
-    assert_eq!(database.get(b"deleted").unwrap(), None);
-    assert_eq!(database.get(b"inserted").unwrap(), Some(b"ok".to_vec()));
+fn assert_state(database: &mut Database<NativeDirectory>, has_batch: bool) {
+    assert_eq!(
+        database.get(b"updated").unwrap(),
+        Some(if has_batch {
+            b"batch value".to_vec()
+        } else {
+            b"acknowledged update".to_vec()
+        })
+    );
     assert_eq!(
         database.get(b"untouched").unwrap(),
-        Some(b"original".to_vec())
+        if has_batch {
+            None
+        } else {
+            Some(b"original".to_vec())
+        }
+    );
+    assert_eq!(
+        database.get(b"new").unwrap(),
+        if has_batch {
+            Some(b"last wins".to_vec())
+        } else {
+            None
+        }
+    );
+    // These confirmed changes are outside the batch and remain in both possible
+    // manifest states, including an acknowledged deletion in the old WAL.
+    assert_eq!(database.get(b"deleted").unwrap(), None);
+    assert_eq!(
+        database.get(b"inserted").unwrap(),
+        Some(b"acknowledged insertion".to_vec())
+    );
+    assert_eq!(
+        database.get(b"second-table").unwrap(),
+        Some(b"retained".to_vec())
+    );
+    let rows = database.scan(Default::default()).unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|(key, _)| key.as_slice() != b"after")
+            .count(),
+        4
     );
 }
 
@@ -223,6 +265,8 @@ fn kill_at_publication(mode: &str) {
     seed.put(b"updated", b"old value").unwrap();
     seed.put(b"deleted", b"must not resurrect").unwrap();
     seed.put(b"untouched", b"original").unwrap();
+    seed.flush().unwrap();
+    seed.put(b"second-table", b"retained").unwrap();
     seed.flush().unwrap();
     seed.close().unwrap();
     let manifest = root.database().join("MANIFEST");
@@ -240,16 +284,18 @@ fn kill_at_publication(mode: &str) {
     child.terminate();
 
     let mut recovered = Database::open(NativeDirectory::open(root.database()).unwrap()).unwrap();
-    assert_committed(&mut recovered);
+    assert_state(&mut recovered, mode != "before");
     // Recovery must also leave a writable database, including generation choice
     // above the orphan SST/WAL/temp files from a pre-publication termination.
     recovered.put(b"after", b"recovery works").unwrap();
     recovered.flush().unwrap();
-    assert!(recovered.compact().unwrap().cleanup.errors.is_empty());
-    assert!(recovered.collect_garbage().unwrap().errors.is_empty());
+    let compacted = recovered.compact().unwrap();
+    assert!(compacted.cleanup.errors.is_empty());
+    let cleanup = recovered.collect_garbage().unwrap();
+    assert!(cleanup.errors.is_empty());
     recovered.close().unwrap();
     let mut reopened = Database::open(NativeDirectory::open(root.database()).unwrap()).unwrap();
-    assert_committed(&mut reopened);
+    assert_state(&mut reopened, mode != "before");
     assert_eq!(
         reopened.get(b"after").unwrap(),
         Some(b"recovery works".to_vec())
@@ -257,11 +303,16 @@ fn kill_at_publication(mode: &str) {
 }
 
 #[test]
-fn wal_preflush_preserves_latest_overwrite_on_kill_before_manifest_rename() {
+fn no_batch_changes_visible_after_kill_before_manifest_rename() {
     kill_at_publication("before");
 }
 
 #[test]
-fn wal_preflush_preserves_latest_overwrite_on_kill_after_manifest_rename_before_directory_sync() {
+fn whole_batch_visible_after_kill_after_manifest_rename_before_directory_sync() {
     kill_at_publication("after");
+}
+
+#[test]
+fn batch_survives_kill_after_success_acknowledgement_without_destructors() {
+    kill_at_publication("ack");
 }

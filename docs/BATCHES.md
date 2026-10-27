@@ -9,13 +9,13 @@ Database::write_batch публикует несколько put/delete вмес�
 Из корня проекта:
 
 ```sh
-batch_demo=$(mktemp -d /tmp/stowtree-batch-demo.XXXXXX)
-cargo run -q -p stowtree-core -- --db "$batch_demo" put old obsolete
-cargo run -q -p stowtree-core -- --db "$batch_demo" flush
-cargo run -q -p stowtree-core -- --db "$batch_demo" put pending retained
-cargo run -q -p stowtree-core -- --db "$batch_demo" batch put theme dark put count 7 delete old
-cargo run -q -p stowtree-core -- --db "$batch_demo" scan
-cargo run -q -p stowtree-core -- --db "$batch_demo" get old
+batch_demo=$(mktemp -d /tmp/hoke-batch-demo.XXXXXX)
+cargo run -q -p hoke-core -- --db "$batch_demo" put old obsolete
+cargo run -q -p hoke-core -- --db "$batch_demo" flush
+cargo run -q -p hoke-core -- --db "$batch_demo" put pending retained
+cargo run -q -p hoke-core -- --db "$batch_demo" batch put theme dark put count 7 delete old
+cargo run -q -p hoke-core -- --db "$batch_demo" scan
+cargo run -q -p hoke-core -- --db "$batch_demo" get old
 ```
 
 Batch выводит OK batch (published), operations=3, memtable_entries=0, tables=2, wal_bytes=16. Scan в новом процессе показывает count=7, pending=retained и theme=dark. get old возвращает NOT_FOUND. pending был подтверждён до batch только в WAL и тоже сохранился после публикации.
@@ -23,10 +23,10 @@ Batch выводит OK batch (published), operations=3, memtable_entries=0, tab
 Операции идут в порядке аргументов. Здесь последнее действие побеждает:
 
 ```sh
-cargo run -q -p stowtree-core -- --db "$batch_demo" batch put theme light delete theme put theme dark
-cargo run -q -p stowtree-core -- --db "$batch_demo" get theme
-cargo run -q -p stowtree-core -- --db "$batch_demo" compact
-cargo run -q -p stowtree-core -- --db "$batch_demo" scan
+cargo run -q -p hoke-core -- --db "$batch_demo" batch put theme light delete theme put theme dark
+cargo run -q -p hoke-core -- --db "$batch_demo" get theme
+cargo run -q -p hoke-core -- --db "$batch_demo" compact
+cargo run -q -p hoke-core -- --db "$batch_demo" scan
 ```
 
 get theme показывает dark; compact объединяет таблицы, сохраняя те же живые значения. Пустая команда batch допустима и не сбрасывает существующую memtable. На новом пути обычный open при этом создаёт новую пустую базу.
@@ -34,8 +34,8 @@ get theme показывает dark; compact объединяет таблицы
 Парсер проверяет весь список операций до открытия каталога. Неизвестное действие или неполный put/delete вызывают ошибку без записи первой половины:
 
 ```sh
-cargo run -q -p stowtree-core -- --db "$batch_demo" batch put theme light invalid
-cargo run -q -p stowtree-core -- --db "$batch_demo" get theme
+cargo run -q -p hoke-core -- --db "$batch_demo" batch put theme light invalid
+cargo run -q -p hoke-core -- --db "$batch_demo" get theme
 ```
 
 Первая команда завершается с ошибкой, вторая по-прежнему показывает dark. После put следующие два аргумента всегда key/value, после delete следующий аргумент всегда key, даже если они выглядят как команды или флаги. Для пробелов используйте обычное quoting shell. CLI принимает UTF-8, Rust API — произвольные bytes.
@@ -43,10 +43,10 @@ cargo run -q -p stowtree-core -- --db "$batch_demo" get theme
 ## Rust API
 
 ```rust
-use stowtree_core::{BatchOperation, Database, NativeDirectory};
+use hoke_core::{BatchOperation, Database, NativeDirectory};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Database::open(NativeDirectory::open("/tmp/stowtree-batch-db")?)?;
+    let mut db = Database::open(NativeDirectory::open("/tmp/hoke-batch-db")?)?;
     db.write_batch(&[
         BatchOperation::Put { key: b"theme".to_vec(), value: b"dark".to_vec() },
         BatchOperation::Put { key: b"count".to_vec(), value: b"7".to_vec() },
@@ -74,9 +74,9 @@ BatchOperation — owned enum, метод принимает slice. validate_bat
 ## Автоматические проверки
 
 ```sh
-cargo test -p stowtree-core --test batch
-cargo test -p stowtree-core --test batch_process
-cargo test -p stowtree-core --test cli_batch
+cargo test -p hoke-core --test batch
+cargo test -p hoke-core --test batch_process
+cargo test -p hoke-core --test cli_batch
 pnpm check
 ```
 

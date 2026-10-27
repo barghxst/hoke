@@ -12,12 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::FileStorage;
-use stowtree_core::{Database, NativeDirectory};
+use hoke_core::directory::Directory;
+use hoke_core::storage::FileStorage;
+use hoke_core::{Database, NativeDirectory};
 
-const MODE: &str = "STOWTREE_FLUSH_PROCESS_TEST_MODE";
-const ROOT: &str = "STOWTREE_FLUSH_PROCESS_TEST_ROOT";
+const MODE: &str = "HOKE_FLUSH_PROCESS_TEST_MODE";
+const ROOT: &str = "HOKE_FLUSH_PROCESS_TEST_ROOT";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct TempDirectory(PathBuf);
@@ -26,7 +26,7 @@ impl TempDirectory {
     fn new() -> Self {
         loop {
             let path = std::env::temp_dir().join(format!(
-                "stowtree-flush-process-test-{}-{}",
+                "hoke-flush-process-test-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));

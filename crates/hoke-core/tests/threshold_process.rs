@@ -1,4 +1,4 @@
-//! Kill a real process around compaction publication and obsolete-file cleanup.
+//! Kill a real process around manifest publication, without running destructors.
 //! These checks exercise process crashes, not loss of power or filesystem caches.
 #![cfg(unix)]
 
@@ -12,12 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use stowtree_core::directory::Directory;
-use stowtree_core::storage::FileStorage;
-use stowtree_core::{Database, NativeDirectory};
+use hoke_core::directory::Directory;
+use hoke_core::storage::FileStorage;
+use hoke_core::{Database, DatabaseOptions, NativeDirectory};
 
-const MODE: &str = "STOWTREE_COMPACTION_PROCESS_TEST_MODE";
-const ROOT: &str = "STOWTREE_COMPACTION_PROCESS_TEST_ROOT";
+const MODE: &str = "HOKE_THRESHOLD_PROCESS_TEST_MODE";
+const ROOT: &str = "HOKE_THRESHOLD_PROCESS_TEST_ROOT";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct TempDirectory(PathBuf);
@@ -26,7 +26,7 @@ impl TempDirectory {
     fn new() -> Self {
         loop {
             let path = std::env::temp_dir().join(format!(
-                "stowtree-compaction-process-test-{}-{}",
+                "hoke-threshold-process-test-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
@@ -55,7 +55,7 @@ impl RunningChild {
     fn spawn(root: &TempDirectory, mode: &str) -> Self {
         Self(
             Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "compaction_child_driver", "--nocapture"])
+                .args(["--exact", "threshold_child_driver", "--nocapture"])
                 .env(MODE, mode)
                 .env(ROOT, &root.0)
                 .stdin(Stdio::null())
@@ -70,7 +70,7 @@ impl RunningChild {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = self.0.try_wait().unwrap() {
-                panic!("child exited before reaching compaction boundary: {status}");
+                panic!("child exited before reaching manifest boundary: {status}");
             }
             if root.0.join("ready").is_file() {
                 return;
@@ -87,7 +87,7 @@ impl RunningChild {
             if let Some(status) = self.0.try_wait().unwrap() {
                 assert!(
                     !status.success(),
-                    "child must be killed before compaction returns"
+                    "child must be killed before flush returns"
                 );
                 return;
             }
@@ -108,18 +108,15 @@ impl Drop for RunningChild {
 struct PausedPublication {
     directory: NativeDirectory,
     armed: Rc<Cell<bool>>,
-    mode: String,
-    removed_once: Cell<bool>,
+    pause_after_rename: bool,
     ready: PathBuf,
 }
 
 impl PausedPublication {
-    fn pause(&self, boundary: &str) -> ! {
+    fn pause(&self) -> ! {
         // The marker is outside the database and is emitted only after every
         // acknowledged mutation has returned successfully in the child driver.
-        let pending = self.ready.with_extension("pending");
-        fs::write(&pending, boundary).unwrap();
-        fs::rename(pending, &self.ready).unwrap();
+        fs::write(&self.ready, b"ready").unwrap();
         loop {
             thread::park();
         }
@@ -142,27 +139,17 @@ impl Directory for PausedPublication {
     }
 
     fn rename(&self, from: &str, to: &str) -> io::Result<()> {
-        if self.armed.get() && self.mode == "before" {
+        if self.armed.get() {
             assert_eq!(to, "MANIFEST");
-            self.pause("before manifest rename");
+            if !self.pause_after_rename {
+                self.pause();
+            }
         }
         self.directory.rename(from, to)?;
-        if self.armed.get() && self.mode == "after" {
+        if self.armed.get() {
             // Pause before returning to Database, hence before directory fsync
             // and switching the in-memory WAL/table handles.
-            self.pause("after manifest rename");
-        }
-        Ok(())
-    }
-
-    fn remove_file(&self, name: &str) -> io::Result<()> {
-        let first = self.armed.get() && !self.removed_once.replace(true);
-        if first && self.mode == "before_remove" {
-            self.pause(name);
-        }
-        self.directory.remove_file(name)?;
-        if first && self.mode == "after_remove" {
-            self.pause(name);
+            self.pause();
         }
         Ok(())
     }
@@ -173,33 +160,43 @@ impl Directory for PausedPublication {
 }
 
 #[test]
-fn compaction_child_driver() {
+fn threshold_child_driver() {
     let Some(mode) = std::env::var_os(MODE) else {
         return;
     };
     let root = PathBuf::from(std::env::var_os(ROOT).unwrap());
-    let mode = mode.into_string().unwrap();
-    assert!(["before", "after", "before_remove", "after_remove"].contains(&mode.as_str()));
+    let pause_after_rename = match mode.to_str().unwrap() {
+        "before" => false,
+        "after" => true,
+        other => panic!("unknown process mode: {other}"),
+    };
     let armed = Rc::new(Cell::new(false));
     let directory = PausedPublication {
         directory: NativeDirectory::open(root.join("database")).unwrap(),
         armed: Rc::clone(&armed),
-        mode,
-        removed_once: Cell::new(false),
+        pause_after_rename,
         ready: root.join("ready"),
     };
-    let mut database = Database::open(directory).unwrap();
+    let mut database = Database::open_with_options(
+        directory,
+        DatabaseOptions {
+            max_memtable_bytes: Some(100),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     database.put(b"updated", b"acknowledged update").unwrap();
     database.delete(b"deleted").unwrap();
     database
         .put(b"inserted", b"acknowledged insertion")
         .unwrap();
     armed.set(true);
-    database.compact().unwrap();
-    panic!("compaction unexpectedly returned instead of pausing");
+    database.put(b"unrequested", &[1; 100]).unwrap();
+    panic!("threshold preflush unexpectedly returned instead of pausing");
 }
 
 fn assert_committed(database: &mut Database<NativeDirectory>) {
+    assert_eq!(database.get(b"unrequested").unwrap(), None);
     assert_eq!(
         database.get(b"updated").unwrap(),
         Some(b"acknowledged update".to_vec())
@@ -208,10 +205,6 @@ fn assert_committed(database: &mut Database<NativeDirectory>) {
     assert_eq!(
         database.get(b"inserted").unwrap(),
         Some(b"acknowledged insertion".to_vec())
-    );
-    assert_eq!(
-        database.get(b"second-table").unwrap(),
-        Some(b"retained".to_vec())
     );
     assert_eq!(
         database.get(b"untouched").unwrap(),
@@ -226,8 +219,6 @@ fn kill_at_publication(mode: &str) {
     seed.put(b"deleted", b"must not resurrect").unwrap();
     seed.put(b"untouched", b"original").unwrap();
     seed.flush().unwrap();
-    seed.put(b"second-table", b"retained").unwrap();
-    seed.flush().unwrap();
     seed.close().unwrap();
     let manifest = root.database().join("MANIFEST");
     let initial_manifest = fs::read(&manifest).unwrap();
@@ -241,11 +232,6 @@ fn kill_at_publication(mode: &str) {
     } else {
         assert_ne!(visible_manifest, initial_manifest);
     }
-    if mode == "before_remove" || mode == "after_remove" {
-        let name = fs::read_to_string(root.0.join("ready")).unwrap();
-        assert!(name.ends_with(".wal") || name.ends_with(".sst"));
-        assert_eq!(root.database().join(name).exists(), mode == "before_remove");
-    }
     child.terminate();
 
     let mut recovered = Database::open(NativeDirectory::open(root.database()).unwrap()).unwrap();
@@ -254,10 +240,6 @@ fn kill_at_publication(mode: &str) {
     // above the orphan SST/WAL/temp files from a pre-publication termination.
     recovered.put(b"after", b"recovery works").unwrap();
     recovered.flush().unwrap();
-    let compacted = recovered.compact().unwrap();
-    assert!(compacted.cleanup.errors.is_empty());
-    let cleanup = recovered.collect_garbage().unwrap();
-    assert!(cleanup.errors.is_empty());
     recovered.close().unwrap();
     let mut reopened = Database::open(NativeDirectory::open(root.database()).unwrap()).unwrap();
     assert_committed(&mut reopened);
@@ -268,21 +250,12 @@ fn kill_at_publication(mode: &str) {
 }
 
 #[test]
-fn acknowledged_changes_survive_kill_before_manifest_rename() {
+fn preflush_excludes_new_operation_and_preserves_acks_on_kill_before_manifest_rename() {
     kill_at_publication("before");
 }
 
 #[test]
-fn acknowledged_changes_survive_kill_after_manifest_rename_before_directory_sync() {
+fn preflush_excludes_new_operation_and_preserves_acks_on_kill_after_manifest_rename_before_directory_sync()
+ {
     kill_at_publication("after");
-}
-
-#[test]
-fn acknowledged_changes_survive_kill_before_first_obsolete_unlink() {
-    kill_at_publication("before_remove");
-}
-
-#[test]
-fn acknowledged_changes_survive_kill_after_first_obsolete_unlink() {
-    kill_at_publication("after_remove");
 }

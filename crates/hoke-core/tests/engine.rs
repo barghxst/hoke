@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
 
-use stowtree_core::storage::Storage;
-use stowtree_core::{Engine, Error};
+use hoke_core::storage::Storage;
+use hoke_core::{Engine, Error};
 
 const FILE_HEADER: usize = 16;
 const FRAME_HEADER: usize = 28;

@@ -9,7 +9,7 @@ struct TempDirectory(PathBuf);
 impl TempDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "stowtree-wal-threshold-cli-{}-{}",
+            "hoke-wal-threshold-cli-{}-{}",
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
@@ -29,7 +29,7 @@ impl Drop for TempDirectory {
 }
 
 fn invoke(path: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_stowtree"))
+    Command::new(env!("CARGO_BIN_EXE_hoke"))
         .arg("--db")
         .arg(path)
         .args(arguments)
@@ -193,7 +193,7 @@ fn invalid_wal_flags_leave_absent_and_existing_paths_untouched() {
         if exists {
             std::fs::write(&legacy, b"unchanged").unwrap();
         }
-        let output = Command::new(env!("CARGO_BIN_EXE_stowtree"))
+        let output = Command::new(env!("CARGO_BIN_EXE_hoke"))
             .arg(&legacy)
             .args(["--wal-limit", "90", "info"])
             .output()

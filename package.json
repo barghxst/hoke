@@ -1,9 +1,9 @@
 {
-  "name": "stowtree-workspace",
+  "name": "hoke-workspace",
   "private": true,
   "packageManager": "pnpm@11.22.0",
   "scripts": {
-    "build": "pnpm --filter stowtree build",
+    "build": "pnpm --filter hoke build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:package": "node scripts/package-smoke.mjs",
