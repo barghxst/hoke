@@ -5,9 +5,11 @@
 
 use std::io;
 
+#[cfg(not(target_family = "wasm"))]
 mod file;
 mod memory;
 
+#[cfg(not(target_family = "wasm"))]
 pub use file::FileStorage;
 pub use memory::MemoryStorage;
 

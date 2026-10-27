@@ -1,0 +1,318 @@
+{
+  "schema": 1,
+  "runs": 3,
+  "cases": [
+    {
+      "case": "put_sequential",
+      "calls_per_run": [1000, 1000, 1000],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 3000,
+      "latency_ns": {
+        "p50": 1818569.5,
+        "p95": 1933259.0,
+        "p99": 2774030.1999999993
+      },
+      "elapsed_ns": {
+        "min": 1836276589,
+        "median": 1859611921,
+        "max": 1868529655
+      },
+      "calls_per_second": {
+        "min": 535.1801601457591,
+        "median": 537.7466065404944,
+        "max": 544.5802696556624
+      },
+      "items_per_second": {
+        "min": 535.1801601457591,
+        "median": 537.7466065404944,
+        "max": 544.5802696556624
+      }
+    },
+    {
+      "case": "overwrite_random",
+      "calls_per_run": [1000, 1000, 1000],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 3000,
+      "latency_ns": {
+        "p50": 1812914.0,
+        "p95": 1924298.0,
+        "p99": 2774203.6999999993
+      },
+      "elapsed_ns": {
+        "min": 1833386222,
+        "median": 1851217301,
+        "max": 1909121618
+      },
+      "calls_per_second": {
+        "min": 523.8010981446023,
+        "median": 540.185098453766,
+        "max": 545.4388104374005
+      },
+      "items_per_second": {
+        "min": 523.8010981446023,
+        "median": 540.185098453766,
+        "max": 545.4388104374005
+      }
+    },
+    {
+      "case": "reopen_wal",
+      "calls_per_run": [1, 1, 1],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 3,
+      "latency_ns": {
+        "p50": 7375539.0,
+        "p95": null,
+        "p99": null
+      },
+      "elapsed_ns": {
+        "min": 7229866,
+        "median": 7375539,
+        "max": 7891738
+      },
+      "calls_per_second": {
+        "min": 126.71479970571755,
+        "median": 135.5833112671494,
+        "max": 138.31514996266873
+      },
+      "items_per_second": {
+        "min": 126714.79970571755,
+        "median": 135583.31126714943,
+        "max": 138315.14996266874
+      }
+    },
+    {
+      "case": "flush",
+      "calls_per_run": [1, 1, 1],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 3,
+      "latency_ns": {
+        "p50": 18279643.0,
+        "p95": null,
+        "p99": null
+      },
+      "elapsed_ns": {
+        "min": 18138460,
+        "median": 18279643,
+        "max": 18345314
+      },
+      "calls_per_second": {
+        "min": 54.50983286522106,
+        "median": 54.70566356246673,
+        "max": 55.131472021329266
+      },
+      "items_per_second": {
+        "min": 54509.83286522106,
+        "median": 54705.663562466725,
+        "max": 55131.47202132926
+      }
+    },
+    {
+      "case": "get_sst_random",
+      "calls_per_run": [1000, 1000, 1000],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 3000,
+      "latency_ns": {
+        "p50": 1960.0,
+        "p95": 2590.0,
+        "p99": 2860.0999999999976
+      },
+      "elapsed_ns": {
+        "min": 1909326,
+        "median": 1933857,
+        "max": 2425943
+      },
+      "calls_per_second": {
+        "min": 412210.8392489024,
+        "median": 517101.31617798004,
+        "max": 523745.0283503184
+      },
+      "items_per_second": {
+        "min": 412210.8392489024,
+        "median": 517101.31617798004,
+        "max": 523745.0283503184
+      }
+    },
+    {
+      "case": "get_sst_missing",
+      "calls_per_run": [1000, 1000, 1000],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 3000,
+      "latency_ns": {
+        "p50": 130.0,
+        "p95": 310.0,
+        "p99": 480.0
+      },
+      "elapsed_ns": {
+        "min": 160164,
+        "median": 163043,
+        "max": 193503
+      },
+      "calls_per_second": {
+        "min": 5167878.534182932,
+        "median": 6133351.324497218,
+        "max": 6243600.309682575
+      },
+      "items_per_second": {
+        "min": 5167878.534182932,
+        "median": 6133351.324497218,
+        "max": 6243600.309682575
+      }
+    },
+    {
+      "case": "scan_forward",
+      "calls_per_run": [50, 50, 50],
+      "items_per_run": [5000, 5000, 5000],
+      "sample_count": 150,
+      "latency_ns": {
+        "p50": 184694.0,
+        "p95": 235105.0,
+        "p99": 248262.3
+      },
+      "elapsed_ns": {
+        "min": 9300135,
+        "median": 9967700,
+        "max": 10075095
+      },
+      "calls_per_second": {
+        "min": 4962.732361332573,
+        "median": 5016.202333537326,
+        "max": 5376.266043449907
+      },
+      "items_per_second": {
+        "min": 496273.2361332573,
+        "median": 501620.23335373256,
+        "max": 537626.6043449907
+      }
+    },
+    {
+      "case": "scan_reverse",
+      "calls_per_run": [50, 50, 50],
+      "items_per_run": [5000, 5000, 5000],
+      "sample_count": 150,
+      "latency_ns": {
+        "p50": 183878.5,
+        "p95": 231995.99999999997,
+        "p99": 241464.8099999999
+      },
+      "elapsed_ns": {
+        "min": 9201433,
+        "median": 9344304,
+        "max": 10101138
+      },
+      "calls_per_second": {
+        "min": 4949.937323893605,
+        "median": 5350.853311279257,
+        "max": 5433.936214065788
+      },
+      "items_per_second": {
+        "min": 494993.7323893605,
+        "median": 535085.3311279257,
+        "max": 543393.6214065787
+      }
+    },
+    {
+      "case": "batch_put",
+      "calls_per_run": [10, 10, 10],
+      "items_per_run": [1000, 1000, 1000],
+      "sample_count": 30,
+      "latency_ns": {
+        "p50": 12211959.5,
+        "p95": 12346700.0,
+        "p99": null
+      },
+      "elapsed_ns": {
+        "min": 121782664,
+        "median": 122306204,
+        "max": 122313765
+      },
+      "calls_per_second": {
+        "min": 81.75694697976144,
+        "median": 81.76200121459088,
+        "max": 82.11349359215856
+      },
+      "items_per_second": {
+        "min": 8175.694697976143,
+        "median": 8176.200121459088,
+        "max": 8211.349359215857
+      }
+    },
+    {
+      "case": "compact",
+      "calls_per_run": [1, 1, 1],
+      "items_per_run": [666, 666, 666],
+      "sample_count": 3,
+      "latency_ns": {
+        "p50": 22427560.0,
+        "p95": null,
+        "p99": null
+      },
+      "elapsed_ns": {
+        "min": 22076174,
+        "median": 22427560,
+        "max": 23106383
+      },
+      "calls_per_second": {
+        "min": 43.278084674697894,
+        "median": 44.58799798105545,
+        "max": 45.29770421269555
+      },
+      "items_per_second": {
+        "min": 28823.2043933488,
+        "median": 29695.60665538293,
+        "max": 30168.27100565524
+      }
+    },
+    {
+      "case": "reopen_sst",
+      "calls_per_run": [1, 1, 1],
+      "items_per_run": [666, 666, 666],
+      "sample_count": 3,
+      "latency_ns": {
+        "p50": 1181272.0,
+        "p95": null,
+        "p99": null
+      },
+      "elapsed_ns": {
+        "min": 1175372,
+        "median": 1181272,
+        "max": 1303134
+      },
+      "calls_per_second": {
+        "min": 767.3807912309862,
+        "median": 846.5450802186118,
+        "max": 850.7944718778396
+      },
+      "items_per_second": {
+        "min": 511075.60695983685,
+        "median": 563799.0234255955,
+        "max": 566629.1182706411
+      }
+    },
+    {
+      "case": "gc",
+      "calls_per_run": [1, 1, 1],
+      "items_per_run": [1, 1, 1],
+      "sample_count": 3,
+      "latency_ns": {
+        "p50": 5013254.0,
+        "p95": null,
+        "p99": null
+      },
+      "elapsed_ns": {
+        "min": 4144878,
+        "median": 5013254,
+        "max": 5230788
+      },
+      "calls_per_second": {
+        "min": 191.1757846045376,
+        "median": 199.4712416326801,
+        "max": 241.2616245882267
+      },
+      "items_per_second": {
+        "min": 191.1757846045376,
+        "median": 199.4712416326801,
+        "max": 241.2616245882267
+      }
+    }
+  ]
+}

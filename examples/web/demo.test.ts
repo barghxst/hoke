@@ -119,5 +119,13 @@ describe("shipped web example", () => {
     expect(element("error").textContent).toContain("INVALID_DATA");
     expect((element("increment") as HTMLButtonElement).disabled).toBe(true);
     expect(localStorage.getItem(persistedKey)).toBe("{broken");
+    localStorage.setItem("other-app", "keep");
+    click("clear");
+    expect(element("error").textContent).toBe("");
+    expect(element("count").textContent).toBe("0");
+    expect(localStorage.getItem(persistedKey)).toBeNull();
+    expect(localStorage.getItem("other-app")).toBe("keep");
+    mount();
+    expect(element("count").textContent).toBe("0");
   });
 });

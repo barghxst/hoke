@@ -21,7 +21,7 @@ Cargo workspace и crate `hoke-core`, без сторонних зависимо
 - MemoryStorage — явно выбранный volatile backend, а не резервный путь при ошибке файлов.
 - Блокировка удерживается до закрытия владельца. Ошибки open/read/write/metadata/sync передаются вызывающему коду.
 
-Текущая проверенная среда: Rust 1.97.1, Linux. В Cargo указан нижний API baseline 1.89 для std file locks; отдельной проверки MSRV и других ОС пока нет.
+Текущая проверенная среда: Rust 1.97.1, Linux. В Cargo указан нижний API baseline 1.89 для std file locks; полный native test suite также проверен на Rust 1.89.0/Linux; другие ОС пока не проверялись.
 
 ## Выбор формата WAL
 

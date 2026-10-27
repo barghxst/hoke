@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hoke — Rust/WASM и OPFS</title>
+    <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, sans-serif;
+    }
+    body {
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 20px;
+    }
+    button,
+    input {
+      font: inherit;
+      padding: 10px;
+      margin: 4px 0;
+    }
+    pre {
+      white-space: pre-wrap;
+      padding: 16px;
+      background: #8882;
+    }
+    #error {
+      color: #d44;
+    }
+    </style>
+  </head>
+  <body>
+    <h1>Hoke: Rust/WASM → Worker → OPFS</h1>
+    <p>
+      Экспериментальный WAL v1. Значение сохраняется в OPFS этого origin. Перезагрузите страницу и
+      снова откройте базу, чтобы проверить сохранение.
+    </p>
+    <p>
+      Это первый браузерный срез: get/put/delete, без SST, scan и atomic batch. Один владелец файла;
+      второе открытие получит LOCKED.
+    </p>
+    <button id="open" type="button">Открыть базу</button>
+    <button id="close" type="button" disabled>Закрыть базу</button>
+    <p><label for="value">Значение ключа theme</label></p>
+    <input id="value" value="dark">
+    <button id="put" type="button" disabled>Сохранить</button>
+    <button id="get" type="button" disabled>Прочитать</button>
+    <button id="delete" type="button" disabled>Удалить ключ</button>
+    <p id="status">База закрыта.</p>
+    <p id="error" role="alert"></p>
+    <pre id="result">Здесь появится прочитанное значение.</pre>
+    <p>
+      ACK записи возвращается после OPFS flush. Ошибка/таймаут могут означать неизвестный исход
+      записи: закройте базу, откройте снова и прочитайте значение. Автоматического повтора нет.
+    </p>
+    <script type="module">
+    import { openDB } from "../../packages/hoke/dist/db/index.js";
+
+    const element = (id) => document.getElementById(id);
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const key = encoder.encode("theme");
+    let db;
+    let busy = false;
+    function controls() {
+      element("open").disabled = busy || Boolean(db);
+      element("close").disabled = busy || !db;
+      for (const id of ["put", "get", "delete"]) element(id).disabled = busy || !db;
+    }
+    async function attempt(action) {
+      if (busy) return;
+      busy = true;
+      controls();
+      element("error").textContent = "";
+      try {
+        await action();
+      } catch (error) {
+        element("error").textContent = `${error.code ?? "ERROR"}: ${error.message}`;
+      } finally {
+        busy = false;
+        controls();
+      }
+    }
+    element("open").addEventListener("click", () =>
+      attempt(async () => {
+        db = await openDB("browser-demo");
+        element("status").textContent = `База открыта: ${db.mode}.`;
+      }),
+    );
+    element("close").addEventListener("click", () =>
+      attempt(async () => {
+        const current = db;
+        db = undefined;
+        await current.close();
+        element("status").textContent = "База закрыта.";
+      }),
+    );
+    element("put").addEventListener("click", () =>
+      attempt(async () => {
+        await db.put(key, encoder.encode(element("value").value));
+        element("result").textContent = "Запись подтверждена после OPFS flush.";
+      }),
+    );
+    element("get").addEventListener("click", () =>
+      attempt(async () => {
+        const value = await db.get(key);
+        element("result").textContent =
+          value === undefined ? "Ключ отсутствует." : decoder.decode(value);
+      }),
+    );
+    element("delete").addEventListener("click", () =>
+      attempt(async () => {
+        await db.delete(key);
+        element("result").textContent = "Удаление подтверждено после OPFS flush.";
+      }),
+    );
+    </script>
+  </body>
+</html>

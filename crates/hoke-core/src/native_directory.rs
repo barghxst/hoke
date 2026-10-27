@@ -22,8 +22,9 @@ impl NativeDirectory {
     /// The parent must exist. A newly created directory is synchronized through
     /// its parent on Unix. Directory synchronization is unsupported elsewhere.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        let path = path.as_ref();
-        let created = match fs::create_dir(path) {
+        // Anchor once: later cwd changes must not redirect a locked directory.
+        let path = std::path::absolute(path)?;
+        let created = match fs::create_dir(&path) {
             Ok(()) => true,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 if !path.is_dir() {
@@ -43,6 +44,8 @@ impl NativeDirectory {
                 .unwrap_or(Path::new("."));
             sync_path(parent)?;
         }
+        // Resolve a caller-provided symlink before retaining the directory path.
+        let path = fs::canonicalize(path)?;
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -50,10 +53,7 @@ impl NativeDirectory {
             .truncate(false)
             .open(path.join("LOCK"))?;
         lock.try_lock().map_err(io::Error::from)?;
-        Ok(Self {
-            path: path.to_owned(),
-            _lock: lock,
-        })
+        Ok(Self { path, _lock: lock })
     }
 
     fn file_path(&self, name: &str) -> io::Result<PathBuf> {

@@ -1,3 +1,4 @@
+import { isThenable, observePromise } from "../sync-result.js";
 import type { KVStorage, StorageEntry } from "./storage.js";
 
 /** Compatible with browser Storage; injectable for tests or non-browser hosts. */
@@ -61,6 +62,7 @@ function assertJSON(value: unknown, ancestors = new Set<object>()): void {
     Object.getPrototypeOf(value) !== Object.prototype &&
     Object.getPrototypeOf(value) !== null
   ) {
+    observePromise(value);
     throw new TypeError("Only plain objects and arrays can be persisted");
   }
   ancestors.add(value);
@@ -90,6 +92,7 @@ function assertJSON(value: unknown, ancestors = new Set<object>()): void {
 export function createLocalStorage<Value>(options: LocalStorageOptions<Value>): KVStorage<Value> {
   if (!options.name) throw new TypeError("localStorage name must not be empty");
   const storage = options.storage ?? browserStorage();
+  // Keep the original prefix for persisted-data compatibility after the Hoke rename.
   // A JSON tuple prevents namespace/key collisions, even with punctuation.
   const storageKey = (key: string) => `stowtree:${JSON.stringify([options.name, key])}`;
 
@@ -116,7 +119,10 @@ export function createLocalStorage<Value>(options: LocalStorageOptions<Value>): 
         const value: unknown = cached?.raw === raw ? cached.entry.value : JSON.parse(raw);
         assertJSON(value);
         // Validators may depend on changing application state, so run on every read.
-        if (!options.validate(value)) throw new TypeError("Stored value failed validation");
+        const accepted = options.validate(value);
+        if (isThenable(accepted) || accepted !== true) {
+          throw new TypeError("Stored value failed synchronous validation");
+        }
         if (cached?.raw === raw) return cached.entry;
         const entry = { value };
         snapshots.set(key, { raw, entry });
@@ -132,7 +138,10 @@ export function createLocalStorage<Value>(options: LocalStorageOptions<Value>): 
       let raw: string;
       try {
         assertJSON(value);
-        if (!options.validate(value)) throw new TypeError("Value failed validation");
+        const accepted = options.validate(value);
+        if (isThenable(accepted) || accepted !== true) {
+          throw new TypeError("Value failed synchronous validation");
+        }
         raw = JSON.stringify(value);
       } catch (cause) {
         throw new KVStorageError(

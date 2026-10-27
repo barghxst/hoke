@@ -15,19 +15,23 @@
 - [x] Подготовлен CHANGELOG с незавершёнными релизными условиями.
 - [x] Biome 2.6.3: форматирование и линтинг проекта, безопасные исправления, обязательная проверка в pnpm check/CI.
 - [x] Команда pnpm demo и [инструкция проверки](TESTING.md) с ожидаемыми результатами.
-- [ ] Проверка в настоящем браузере: ранее инструмент не смог запустить runtime. Сейчас демо проверено в jsdom.
+- [x] Проверка настоящего браузера: 9 Playwright scenarios прошли в Chrome 155.0.8059.84/Linux; jsdom остаётся отдельной проверкой.
 - [ ] Выбрать лицензию и владельца npm/GitHub, версию и метаданные для публикации.
 - [ ] Внешний GitHub-репозиторий и публикация npm — не выполнялись.
 
 ## Последняя общая проверка
 
-`pnpm check` — успешно:
+C1: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции Rust/WASM/Worker/OPFS; после добавления ещё трёх browser cases повторены typecheck и полный browser suite:
 
-- Biome без предупреждений, TypeScript build и typecheck;
-- 115 тестов, 6 файлов: KV/storage, store/migrations, React, интеграция и shipped demo;
-- tarball: содержимое, exports, declarations, внешний ESM-потребитель KV/store без React;
-- тот же установленный пакет с React: публичный React entry point, SSR и типы hooks;
-- rustfmt, Clippy с -D warnings и 91 Rust-тест: 46 unit, 12 WAL fault/recovery, 11 flush/model, 4 WAL process, 3 flush process, 10 scan/model/fault и 5 CLI scan (включая child drivers).
+- Biome, TypeScript build/typecheck, installed tarball KV/React/DB + JS/WASM assets;
+- 159 JS tests в 8 файлах (включая 41 DB client/protocol/lifecycle case);
+- 16 actual-WASM adapter tests в Node;
+- rustfmt, строгий Clippy, 192 Rust tests;
+- 11 Python benchmark tests;
+- 25 настоящих Chrome155/Linux browser tests: 15 OPFS/WASM +1 OPFS demo +9 KV demo;
+- отдельно 192 Rust tests на MSRV1.89.0/Linux, WASM release build на wasm32-unknown-unknown.
+
+CI подготовлен для генерации WASM и установки браузера; внешнего запуска CI пока не было. Firefox/WebKit, Windows/macOS и физическая потеря питания не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -181,3 +185,40 @@
 Параллельные агенты реализовали integration/model/fault, process и CLI; root — options/общую pre-write policy, ADR, документацию и интеграцию. Read-only ревью подтвердило формулу frame bytes и порядок ошибок; уточнены rustdoc о двух независимых порогах.
 
 Итоговая проверка WAL threshold: полный pnpm check прошёл — 115 JS + 181 Rust tests, Biome, сборка/типы, tarball, rustfmt и строгий Clippy. Ручной CLI smoke в отдельном временном каталоге: три overwrite при --wal-limit90 дали WAL53→90→53, tables0→0→1 и постоянный memtable_bytes5; get/scan после reopen показали последнее значение9999. Файлы пользовательских баз и название проекта не менялись.
+
+## Native benchmarks и переименование в Hoke
+
+- [x] npm-пакет hoke, импорты hoke/kv и hoke/react; Rust hoke-core/hoke_core, CLI hoke; каталоги packages/hoke и crates/hoke-core, workspace/lockfiles/examples/docs обновлены.
+- [x] Persisted markers localStorage/envelope/WAL/SST/manifest сохранены; переименование не сбрасывает данные и не меняет schema versions. Установленный tarball читает/обновляет старую запись без дубликата; отдельная независимо собранная WAL v1 fixture с CRC32 читается новым CLI без изменения bytes.
+- [x] ADR 0009, std-only hoke-bench: 12 API-сценариев, проверка по модели вне таймеров, JSONL только после полного успеха, snapshots bytes/files и ограничение ресурсов до изменений ФС.
+- [x] Python stdlib runner: release build один раз, независимые replicates, environment/source metadata, raw samples, summary с явными calls/items и ограничениями percentiles; failed state без summary.
+- [x] Rust process tests и Python unittest включены в локальную проверку/CI. CI на внешнем сервере не запускался.
+- [x] Полный pnpm check: 115 JS + 186 Rust + 11 Python tests, Biome, build/typecheck, установленный tarball, rustfmt, строгий Clippy. После добавления проверки table cap повторены 5 benchmark process tests и строгий Clippy этого target.
+- [x] Три реальных release-прогона по 1000 ключей, key16/value256/batch100/scan100×50/seed1. Raw results и environment сохранены в benchmarks/results/2026-10-27-native-baseline, временные базы удалены. Методика: BENCHMARKS.md, совместимость: RENAMING.md.
+
+Локальный p50: synced put около1.82ms, успешный SST get около1.96µs. Измеряется Rust API с прогретым файловым кэшем; это не cold storage, не JS/WASM и не сравнительный benchmark. Модель накопителя не определялась. Нагрузки не измеряют peak RSS и не доказывают power-loss safety. Форматы данных и API движка при этом срезе не изменялись. Никакой публикации или создания внешнего репозитория не выполнялось.
+
+## Итоговый аудит KV и native-прототипа
+
+- [x] Исправлен NativeDirectory с относительным путём: absolute/canonical path фиксируется при open. Изолированный child process меняет cwd, выполняет flush/compact и доказывает сохранение обоих ACK в исходной базе; соседняя заблокированная база не меняется.
+- [x] Чистые ошибки capacity до файловых операций не poison базу. Проверки числа таблиц для manual/threshold flush, лимитов SST и generation overflow разрешают compact/GC/повтор. Неизвестные исходы файловых операций сохраняют прежний poison/reopen контракт.
+- [x] Runtime validators Store/localStorage принимают только синхронный true. Promise/thenable отклоняются, native Promise rejections наблюдаются без unhandled rejection; custom thenable.then не вызывается. Проверены local/cross-realm Promise, defaults/set/updater/migration, adapter read/write и сохранение исходных записей.
+- [x] Исправлена явная очистка повреждённого JSON в демо: storage.remove без предварительного чтения, затем reopen. Чужие ключи сохраняются. Обычное чтение не очищает повреждения.
+- [x] Playwright с изолированными contexts, trace/screenshot при ошибке, отдельным сервером и без переиспользования занятого порта. pnpm check:all — полный прогон, pnpm test:browser — browser suite.
+- [x] Rust MSRV 1.89.0 проверен реальным полным прогоном; latest CI toolchain остаётся 1.97.1. Подготовлены browser/MSRV CI jobs.
+- [x] Финальный прогон: 118 JS + 190 Rust + 11 Python + 9 browser tests; сборка/типы, tarball, Biome, rustfmt и Clippy прошли.
+
+Текущие KV/store/React и native B реализованы и проверены как экспериментальный прототип. Это не завершение всех этапов A–F. Следующий продуктовый рубеж — C: WASM-сборка, Worker-протокол и реальное OPFS. До записи базы в браузере нужен ADR, как перенести существующий Directory commit/ownership контракт, не подменяя отсутствующие гарантии успешными no-op. Затем multi-tab, React Native и devtools по плану. Лицензия, авторство, внешние ресурсы и публикация остаются отдельными решениями пользователя.
+
+## C1: первый Rust/WASM/Worker/OPFS срез
+
+- [x] ADR0010: существующий WAL-only Engine и отдельный OPFS файл; native Directory не имитируется no-op rename/sync. Форматы файлов не менялись. Полный browser Database/SST commit остаётся отдельным решением.
+- [x] hoke-wasm, точная пара wasm-bindgen crate/CLI0.2.129, release wasm32 build и cfg gates native adapters. Storage bridge ловит JS exceptions, проверяет числа/offsets, завершает short writes и вызывает OPFS flush перед ACK.
+- [x] hoke/db: openDB(name), mode wal-v1, async get/put/delete/close, typed version1 protocol, limits/copy/timeout/terminal transport errors. Без browser globals/WASM initialization при импорте KV/React/DB.
+- [x] Dedicated Worker сериализует запросы, загружает WASM до изменений ФС, открывает OPFS/hoke-wal-v1/<name>.wal с исключительным sync handle. Второй владелец получает LOCKED. Ошибки не заменяются памятью/localStorage.
+- [x] close/error cleanup освобождает Rust allocations/handle. Дополнительно исправлена остановка очереди при двойной ошибке postMessage: terminal catch освобождает owner и сигнализирует client error, pending calls прекращаются.
+- [x] Сборка и tarball включают generated JS/WASM/declarations, smoke проверяет установленный hoke/db без Worker и отсутствие React-зависимости KV.
+- [x] 41 client unit case,16 настоящих WASM adapter tests,15 real OPFS cases и одно запускаемое демо. Браузерные сценарии включают corrupt/future version с CRC без переписывания, incomplete tail, confirmed ACK после reload/termination, unknown flush outcome, read/write/transport/quota failures, unsupported sync handles и failed WASM fetch без создания OPFS.
+- [x] Полная проверка прошла; итоговые количества приведены выше. Никакой публикации не было.
+
+Запуск: pnpm demo → /examples/opfs/. Подготовка, API и ограничения — OPFS.md. Tested Chrome155/Linux. C1 не является завершением C: пока отсутствуют browser SST/compaction, scan/collection, atomic batch, subscriptions и DB migrations. Весь WAL хранится/проигрывается целиком; общий размер не ограничен API, mode экспериментальный. Timeout/lost reply может означать commit без ACK; автоматического повтора нет. Worker termination не моделирует потерю питания или browser-process crash.

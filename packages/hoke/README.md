@@ -2,7 +2,7 @@
 
 Typed key-value storage, versioned reactive stores, and React hooks.
 
-This is an unpublished early prototype. Memory and localStorage are implemented; a database engine, React Native, and cross-tab notifications are planned.
+This is an unpublished early prototype. Memory and localStorage are implemented. A native Rust database prototype lives in crates/hoke-core; it is not part of this npm package. An experimental hoke/db entry point runs the existing WAL-only Engine in WASM/Worker/OPFS. Full browser SST/compaction, React Native, and cross-tab routing remain future work.
 
 ```ts
 import { createKV, createStore, defineStore } from "hoke/kv";
@@ -24,4 +24,8 @@ Use `createLocalStorage({ name, validate })` as the `storage` option of `createK
 
 Snapshots and supplied values must be treated as immutable. Subscriptions apply only to writes through the same KV instance. `getServerSnapshot()` returns stable defaults; server and client defaults must match during hydration. Updates and migrations receive protected structured clones, so their inputs must be cloneable.
 
-Only ESM exports `hoke/kv` and `hoke/react` are available. Node 24 and React 19.3.x are the current tested development environments. The package remains private while licensing, ownership, and release metadata are pending.
+ESM exports are hoke/kv, hoke/react and experimental hoke/db. The latter exposes async openDB/get/put/delete/close with mode wal-v1, byte keys/values and one exclusive owner. Node 24 and React 19.3.x are the current tested development environments. The package remains private while licensing, ownership, and release metadata are pending.
+
+Runtime validators must synchronously return exactly true for accepted values. Promise/thenable results are rejected; native Promise rejections are observed without invoking custom thenable methods. Store defaults, updates and migrations are also synchronous.
+
+Browser DB requires a secure context, Dedicated Worker, synchronous OPFS access handles and served JS/WASM assets. It has no fallback. A timeout or lost worker response may leave a committed mutation; reopen and read before retrying. Full WAL replay is unbounded; SST/scan/batch are absent in this browser slice. Source builds require Rust WASM target and wasm-bindgen-cli0.2.129; the tarball contains the generated assets.

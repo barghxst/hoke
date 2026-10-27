@@ -2,7 +2,7 @@
 
 Хранилище данных для веба и React Native: простой KV для настроек и будущая встроенная база на общем Rust-ядре.
 
-Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; JS API hoke/db, WASM, React Native и devtools ещё не реализованы. Пакет не опубликован.
+Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db уже работает через Rust/WASM/Worker/OPFS в режиме WAL-only (get/put/delete/close); браузерные SST/scan/batch, React Native и devtools ещё не реализованы. Пакет не опубликован.
 
 [Подробный план](docs/PLAN.md) · [Ход работ](docs/PROGRESS.md) · [Решения по API](docs/adr/0001-store-and-react-contract.md) · [Changelog](CHANGELOG.md)
 
@@ -13,6 +13,8 @@
 Проверенная среда разработки: Node.js 24, pnpm 11.22.0, Rust 1.97.1 (rustfmt и Clippy). React-хуки протестированы на React 19.3.x. Более широкий диапазон поддержки пока не заявлен.
 
 ```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
 pnpm install
 pnpm check
 node examples/web/smoke.ts
@@ -254,3 +256,17 @@ cargo run -q -p hoke-core -- --db /tmp/hoke-db --wal-limit 67108864 put theme da
 ```
 
 max_wal_bytes/--wal-limit проверяет длину журнала с новым frame перед append, поэтому срабатывает и при overwrite одного ключа. Можно одновременно задать --memtable-limit; любой порог вызывает один preflush. Default обоих None сохраняет ручной режим. Старые WAL/orphans не входят в этот лимит и удаляются явным gc/compact. [Проверка на WAL из 90 bytes](docs/WAL_THRESHOLD.md).
+
+## Измерения Rust API
+
+`pnpm bench` собирает release и выполняет три независимых прогона. Параметры, сырые замеры и сведения о среде сохраняются вместе; методика и ограничения — [BENCHMARKS.md](docs/BENCHMARKS.md). Переименование пакетов и совместимость данных — [RENAMING.md](docs/RENAMING.md).
+
+## Полная проверка перед релизом
+
+`pnpm check` проверяет JS, установленный tarball, Rust и benchmark harness. Для настоящего браузера установите `pnpm exec playwright install chromium` и выполните `pnpm check:all`. Если Chrome уже установлен: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all`. Локально проверен Chrome 155.0.8059.84/Linux; это отдельный прогон от jsdom. Инструкции и ограничения — [TESTING.md](docs/TESTING.md).
+
+## Rust/WASM в OPFS — экспериментальный C1
+
+`hoke/db` теперь предоставляет async openDB/get/put/delete/close через Dedicated Worker и существующий Rust WAL v1. Демо после `pnpm demo`: http://127.0.0.1:8000/examples/opfs/. Для сборки нужны WASM target и wasm-bindgen CLI0.2.129; команды, API и границы гарантий — [OPFS.md](docs/OPFS.md).
+
+Это WAL-only браузерный срез с одним владельцем файла. Native SST/compaction/atomic batch не включены в него автоматически; полный этап C ещё предстоит завершить.

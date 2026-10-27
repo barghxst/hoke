@@ -129,6 +129,7 @@
         },
       },
     });
+    let storage;
     let kv;
     let store;
     let unsubscribe = () => {};
@@ -220,15 +221,15 @@
     element("clear").addEventListener("click", () =>
       attempt(() => {
         unsubscribe();
-        kv.delete("settings");
+        // Explicit recovery also removes malformed JSON without reading it first.
+        storage.remove("settings");
         open();
         element("status").textContent = "Запись удалена. Используются defaults без записи на диск.";
       }),
     );
     attempt(() => {
-      kv = createKV({
-        storage: createLocalStorage({ name: "store-demo", validate: (value) => true }),
-      });
+      storage = createLocalStorage({ name: "store-demo", validate: (value) => true });
+      kv = createKV({ storage });
       scenarios.forEach((control) => {
         control.disabled = false;
       });

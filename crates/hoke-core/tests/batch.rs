@@ -1,13 +1,13 @@
 //! Batch publication faults model visible IO, not power-loss durability.
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::io;
-use std::rc::Rc;
 use hoke_core::directory::Directory;
 use hoke_core::storage::Storage;
 use hoke_core::{
     BatchOperation, Database, MAX_BATCH_BYTES, MAX_BATCH_OPERATIONS, ScanOptions, validate_batch,
 };
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::io;
+use std::rc::Rc;
 
 type Bytes = Rc<RefCell<Vec<u8>>>;
 
@@ -533,10 +533,31 @@ fn combined_sst_index_capacity_is_checked_before_io_without_poison() {
     assert_eq!(db.stats(), stats);
     assert_eq!(db.get(&wide_key(0)).unwrap(), Some(Vec::new()));
     db.put(b"still", b"writable").unwrap();
+    // The same oversized delta must fail manual flush before create_new as well.
+    // These deletes suppress absent keys, so compaction can still fit the live set.
+    for operation in &operations {
+        let hoke_core::BatchOperation::Delete { key } = operation else {
+            unreachable!();
+        };
+        db.delete(key).unwrap();
+    }
+    let stats = db.stats();
+    let names = directory.names("");
+    directory.arm(None);
+    assert!(matches!(db.flush(), Err(hoke_core::DbError::Sst(_))));
+    assert!(directory.fault.borrow().operations.is_empty());
+    assert_eq!(db.stats(), stats);
+    assert_eq!(directory.names(""), names);
+    db.put(b"after rejection", b"still writable").unwrap();
+    db.compact().unwrap();
+    assert_eq!(db.get(&wide_key(0)).unwrap(), Some(Vec::new()));
+    assert_eq!(
+        db.get(b"after rejection").unwrap(),
+        Some(b"still writable".to_vec())
+    );
 }
 
-#[test]
-fn table_count_limit_is_checked_before_io_without_poison() {
+fn table_limit_directory() -> SharedDir {
     let directory = SharedDir::default();
     seed(&directory).close().unwrap();
     let table = directory
@@ -574,6 +595,12 @@ fn table_count_limit_is_checked_before_io_without_poison() {
         .files
         .borrow_mut()
         .insert("g00000000000000004096.wal".into(), wal);
+    directory
+}
+
+#[test]
+fn table_count_limit_is_checked_before_io_without_poison() {
+    let directory = table_limit_directory();
     let mut db = Database::open(directory.clone()).unwrap();
     assert_eq!(db.stats().table_count, 4096);
     let names = directory.names("");
@@ -633,4 +660,81 @@ fn exhausted_generation_is_a_retryable_limit_without_poison() {
     db.close().unwrap();
     let mut db = Database::open(directory).unwrap();
     assert_eq!(state(&mut db), expected);
+}
+
+#[test]
+fn manual_and_threshold_flush_capacity_errors_allow_compaction_without_reopen() {
+    for options in [
+        hoke_core::DatabaseOptions::default(),
+        hoke_core::DatabaseOptions {
+            max_memtable_bytes: Some(1),
+            ..Default::default()
+        },
+        hoke_core::DatabaseOptions {
+            max_wal_bytes: Some(16),
+            ..Default::default()
+        },
+    ] {
+        let directory = table_limit_directory();
+        let mut db = Database::open_with_options(directory.clone(), options).unwrap();
+        let stats = db.stats();
+        let names = directory.names("");
+        directory.arm(None);
+        let error = if options == hoke_core::DatabaseOptions::default() {
+            db.flush().unwrap_err()
+        } else {
+            db.put(b"pending", b"not committed").unwrap_err()
+        };
+        assert!(matches!(error, hoke_core::DbError::Limit(_)));
+        assert!(directory.fault.borrow().operations.is_empty());
+        assert_eq!(db.stats(), stats);
+        assert_eq!(directory.names(""), names);
+        assert_eq!(db.get(b"pending").unwrap(), None);
+        assert_eq!(state(&mut db), before());
+        // The error explicitly requests compaction; it must remain available.
+        db.compact().unwrap();
+        db.put(b"pending", b"now committed").unwrap();
+        db.flush().unwrap();
+        db.close().unwrap();
+        let mut db = Database::open(directory).unwrap();
+        assert_eq!(db.get(b"pending").unwrap(), Some(b"now committed".to_vec()));
+        for (key, value) in before() {
+            assert_eq!(db.get(&key).unwrap(), Some(value));
+        }
+    }
+}
+
+#[test]
+fn generation_limits_allow_flush_and_compaction_retry_after_gc() {
+    for compact in [false, true] {
+        let directory = SharedDir::default();
+        let mut db = seed(&directory);
+        let orphan = "g18446744073709551615.wal";
+        directory
+            .files
+            .borrow_mut()
+            .insert(orphan.into(), Rc::new(RefCell::new(Vec::new())));
+        let stats = db.stats();
+        let names = directory.names("");
+        directory.arm(None);
+        let error = if compact {
+            db.compact().unwrap_err()
+        } else {
+            db.flush().unwrap_err()
+        };
+        assert!(matches!(error, hoke_core::DbError::Limit(_)));
+        assert_eq!(directory.fault.borrow().operations, ["list"]);
+        assert_eq!(db.stats(), stats);
+        assert_eq!(directory.names(""), names);
+        db.collect_garbage().unwrap();
+        assert!(!directory.files.borrow().contains_key(orphan));
+        if compact {
+            db.compact().unwrap();
+        } else {
+            db.flush().unwrap();
+        }
+        assert_eq!(state(&mut db), before());
+        db.close().unwrap();
+        assert_eq!(state(&mut Database::open(directory).unwrap()), before());
+    }
 }

@@ -1,4 +1,5 @@
 import type { KV } from "./kv/index.js";
+import { isThenable } from "./sync-result.js";
 
 export type StoreErrorCode =
   | "invalid-definition"
@@ -42,6 +43,7 @@ export interface Store<T> {
   subscribe(listener: () => void): () => void;
 }
 export interface StoreEnvelope<T = unknown> {
+  // Persisted v1 format marker remains stable across the package rename.
   readonly __stowtree: 1;
   readonly version: number;
   readonly value: T;
@@ -49,13 +51,6 @@ export interface StoreEnvelope<T = unknown> {
 
 function positiveVersion(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-function thenable(value: unknown): boolean {
-  return (
-    value !== null &&
-    (typeof value === "object" || typeof value === "function") &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
 }
 function checkDefinition<T>(definition: StoreDefinition<T>): void {
   if (
@@ -110,7 +105,10 @@ function validateValue<T>(
   code: "invalid-value" | "invalid-defaults",
 ): asserts value is T {
   try {
-    if (!thenable(value) && definition.validate(value)) return;
+    if (!isThenable(value)) {
+      const accepted: unknown = definition.validate(value);
+      if (!isThenable(accepted) && accepted === true) return;
+    }
   } catch (cause) {
     throw new StoreError(code, `Validation failed for store: ${definition.key}`, { cause });
   }
@@ -209,7 +207,7 @@ export function createStore<T>(kv: KV<unknown>, input: StoreDefinition<T>): Stor
         const previous = protectedCopy(value);
         try {
           value = migrate(previous);
-          if (thenable(value)) {
+          if (isThenable(value)) {
             throw new StoreError(
               "async-result",
               `Migration to version ${version} must be synchronous.`,
@@ -260,7 +258,7 @@ export function createStore<T>(kv: KV<unknown>, input: StoreDefinition<T>): Stor
       let next: T;
       try {
         next = updater(previous);
-        if (thenable(next))
+        if (isThenable(next))
           throw new StoreError("async-result", "Store updater must be synchronous.");
       } catch (cause) {
         if (cause instanceof StoreError && cause.code === "async-result") throw cause;

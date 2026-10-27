@@ -1,43 +1,46 @@
 # Changelog
 
-## Unreleased — candidate v0.1
+## Unreleased — experimental Hoke
+
+### JavaScript package
 
 - Synchronous KV with memory and explicit localStorage adapters.
-- Runtime validation, isolated namespaces, stable snapshots and storage errors with causes.
-- Versioned stores, defaults, subscriptions, reset and protected synchronous updates.
-- Migration chains with a single final write and explicit future-version errors.
+- Synchronous runtime validation (exact true), isolated namespaces, stable snapshots and storage errors with causes.
+- Rejected Promise results are handled without unhandled rejections; custom thenable methods are not executed.
+- Versioned stores, protected synchronous updates, defaults, subscriptions and reset.
+- Migration chains with a single final write, preserved originals on pre-commit failure and explicit future-version errors.
 - Optional React entry point with selectors, equality comparison and SSR snapshots.
-- Settings/migration demo, automated checks and tarball consumer verification.
+- Real-browser settings demo with explicit v1 preview/migration, v3 protection and recovery by explicit clear, including malformed JSON.
+- Package renamed to hoke; persisted localStorage prefix and envelope marker retained for compatibility.
 
-Not yet included: DB/LSM engine, WASM/OPFS, multi-tab notifications, React Native, devtools.
+### Native Rust prototype
 
-Publication is pending: license, npm/GitHub ownership and final version/metadata. Nothing has been published.
-
-## Experimental Rust WAL prototype (unpublished)
-
-- Native Cargo workspace and platform-independent byte Storage contract.
-- Locked file backend and explicit volatile memory backend.
+- Byte Storage contract, locked native files and explicit volatile memory storage.
 - Binary WAL v1 with CRC32, bounded frames, replay and incomplete-tail recovery.
-- WAL-only Engine with put/get/delete, sync-before-publication and poisoned writes after I/O failure.
-- CLI persistence across processes, fault injection and real process-kill tests on Unix.
-- Separate JS/Rust checks and CI jobs.
+- Indexed SSTables, checksummed manifest, exclusive ownership and synchronized publication.
+- Ordered scans with byte ranges, prefix, reverse, limits, newest-wins resolution and tombstones.
+- Manual compaction/GC and atomic write batch via SST/manifest publication.
+- Optional payload/WAL pre-write thresholds with manual defaults.
+- Fixed relative-directory ownership across process cwd changes; acknowledged writes stay in the original database.
+- Safe pre-I/O capacity failures remain retryable; uncertain I/O outcomes still poison writes until reopen.
+- Reproducible release benchmarks with raw samples, environment metadata and independent replicas.
 
-Not included: SSTable, compaction, transaction batches, JS DB bindings or power-loss guarantees.
+### Verification
 
-## Experimental SSTable and directory flush (unpublished)
+- Biome, TypeScript, installed tarball consumers, optional React/SSR and JS tests.
+- Rust model/fault tests and real process-kill recovery tests on Linux; tested Rust toolchains 1.89.0 and 1.97.1.
+- Playwright browser scenarios for built module loading, persistence/reload, migrations, reset/clear and unavailable storage.
+- Python benchmark protocol/statistics tests. CI jobs prepared; external CI execution pending.
 
-- Immutable sorted tables with checksummed indexes, lazy value reads and tombstones.
-- Exclusive NativeDirectory ownership, existing-only referenced files and checksummed manifest.
-- Manual flush publishes synchronized SST/WAL through atomic manifest replacement before clearing the memtable.
-- Fault/model checks and real process-kill tests around manifest publication.
-- Directory CLI mode --db with info/flush; the single-WAL CLI remains available.
+The npm package currently ships KV/store/React. Rust Database is a separate native prototype; the experimental browser WAL-only hoke/db binding now uses WASM/Worker/OPFS. Full browser multi-file DB, multi-tab routing, React Native and devtools are future stages. Native batch uses manifest commits, not WAL group commit. Tests do not prove safety under physical power loss or production readiness.
 
-Not included: compaction, orphan/old-WAL garbage collection, range scans, automatic flush thresholds or JS DB bindings.
+Publication is pending: license, npm/GitHub ownership and final version/metadata. No package has been published.
 
-## Ordered scans (unpublished)
+### Experimental browser WAL (C1)
 
-- Rust Database scan/range with Included/Excluded byte bounds, prefix intersection, reverse and live-key limits.
-- Heap merge across SST indexes and memtable, resolving versions and tombstones before reading values.
-- Explicit winner read errors, no fallback, skipped shadowed/unselected payload reads.
-- Directory CLI scan/prefix/range with argument validation, --reverse and --limit.
-- Model, boundary, corruption, no-read and CLI integration tests. Disk formats unchanged.
+- hoke-wasm with the existing Rust WAL Engine and checked synchronous byte adapter.
+- hoke/db async openDB/get/put/delete/close, versioned protocol, copies, timeout and terminal transport handling.
+- Dedicated Worker with real exclusive OPFS sync handles, flush-before-ACK and explicit errors without fallback.
+- Browser reload/recovery/lock/corruption/quota-style fault tests and a runnable OPFS demo.
+- Generated JS/WASM included in tarball; KV/React imports stay independent of browser globals and WASM initialization.
+- No browser SST/scan/compaction/batch yet; full stage C remains incomplete.

@@ -24,6 +24,9 @@ try {
   const contents = run("tar", ["-tzf", join(directory, archive)]);
   assert(contents.includes("package/dist/kv/index.d.ts"));
   assert(contents.includes("package/dist/react/index.js"));
+  assert(contents.includes("package/dist/db/worker.js"));
+  assert(contents.includes("package/wasm/hoke_wasm.js"));
+  assert(contents.includes("package/wasm/hoke_wasm_bg.wasm"));
   assert(!/\.test\.|node_modules\/|package\/src\//.test(contents), "Unexpected files in tarball");
 
   await writeFile(
@@ -44,7 +47,10 @@ try {
   );
   const consumer = `
     import assert from 'node:assert/strict';
-    import { createKV, createStore, defineStore } from 'hoke/kv';
+    import { createKV, createStore, defineStore, createLocalStorage } from 'hoke/kv';
+    import { openDB, DBError } from 'hoke/db';
+    assert.equal(typeof globalThis.Worker, 'undefined');
+    await assert.rejects(openDB('server'), error => error instanceof DBError && error.code === 'UNSUPPORTED');
     assert.equal(typeof globalThis.window, 'undefined');
     assert.throws(() => import.meta.resolve('react'), { code: 'ERR_MODULE_NOT_FOUND' });
     const kv = createKV();
@@ -64,6 +70,23 @@ try {
     assert.equal(reopened.getServerSnapshot(), 0);
     reopened.reset();
     assert.equal(reopened.getSnapshot(), 0);
+
+    // A package rename must still read and update pre-rename persisted records.
+    const legacyKey = 'stowtree:["rename-compat","counter"]';
+    const persisted = new Map([[legacyKey, JSON.stringify({ __stowtree: 1, version: 1, value: 41 })]]);
+    const backend = {
+      getItem: (key) => persisted.get(key) ?? null,
+      setItem: (key, value) => { persisted.set(key, value); },
+      removeItem: (key) => { persisted.delete(key); },
+    };
+    const durableKV = createKV({ storage: createLocalStorage({
+      name: 'rename-compat', storage: backend, validate: () => true,
+    }) });
+    const legacy = createStore(durableKV, definition);
+    assert.equal(legacy.getSnapshot(), 41);
+    legacy.update((value) => value + 1);
+    assert.deepEqual(JSON.parse(persisted.get(legacyKey)), { __stowtree: 1, version: 1, value: 42 });
+    assert.equal(persisted.size, 1);
   `;
   await writeFile(join(directory, "consumer.mjs"), consumer);
   run("node", ["consumer.mjs"], directory);
@@ -73,6 +96,9 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
+    import { openDB, type BrowserDB } from 'hoke/db';
+    const pending: Promise<BrowserDB> = openDB('typed');
+    void pending;
     const definition = defineStore({
       key: 'typed', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } =>

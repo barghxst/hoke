@@ -1,0 +1,4 @@
+   Compiling crc32fast v1.5.3
+   Compiling cfg-if v1.0.5
+   Compiling hoke-core v0.0.0 (/home/barghest/hoke/crates/hoke-core)
+    Finished `release` profile [optimized] target(s) in 1.60s

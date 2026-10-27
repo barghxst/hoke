@@ -2,10 +2,12 @@
 
 ## 1. Проверить проект целиком
 
-Для полной проверки нужны Node.js 24, pnpm 11.22.0 и Rust с rustfmt/Clippy (проверено на Rust 1.97.1, Linux). Все команды выполняются из корня репозитория. Только JS-часть можно проверить через pnpm check:js.
+Для полной проверки нужны Node.js 24, pnpm 11.22.0 и Rust с rustfmt/Clippy (проверено на Rust 1.97.1, Linux). Все команды выполняются из корня репозитория. Сборка JS-пакета теперь также включает Rust/WASM: нужны target wasm32-unknown-unknown и wasm-bindgen-cli0.2.129. Команды установки ниже.
 
 ```sh
 cd /home/barghest/hoke
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
 pnpm install --frozen-lockfile
 pnpm check
 ```
@@ -69,7 +71,7 @@ pnpm exec vitest # тесты в watch-режиме
 
 ## 4. Что делать дальше
 
-Сначала пройти таблицу в настоящем браузере и зафиксировать браузер/версию и результат. Автотесты уже покрывают эту последовательность в jsdom, но это не реальный браузер.
+Таблица проверена автоматическими сценариями в настоящем Chrome 155.0.8059.84. Повторяемая проверка через Playwright описана ниже; jsdom остаётся отдельной проверкой.
 
 Если сценарий расходится с таблицей — записать шаги, текст ошибки и содержимое записи, исправить дефект с регрессионным тестом. По решению пользователя начат Rust-этап: Storage trait, WAL v1 и process-crash recovery реализованы, см. ADR 0002 и WAL_FORMAT.md. Полная проверка веб-сценария в реальном браузере остаётся отдельным пунктом. SSTable/manifest и ручной flush реализованы по ADR 0003, сценарий ниже. Scan/range и ручные compaction/GC реализованы; atomic write batch реализован через manifest, см. раздел 9.
 
@@ -149,3 +151,41 @@ cargo test -p hoke-core --test scan_cli
 ## 11. Проверить порог WAL
 
 [Сценарий с --wal-limit 90](WAL_THRESHOLD.md): две перезаписи a со значением длиной4 дают WAL53 и90 без SST, третья предварительно сбрасывает delta и оставляет WAL53/одну SST/последнее значение. Порог учитывает framing, даже если payload memtable не растёт. Тесты wal_threshold/wal_threshold_process/cli_wal_threshold и полный pnpm check.
+
+## 12. Проверить native benchmarks
+
+`pnpm test:bench` и `cargo test -p hoke-core --test benchmark_cli` проверяют harness без требований к скорости. `pnpm bench` собирает release и сохраняет три реальных прогона. Параметры, единицы и ограничения тёплого кэша — [BENCHMARKS.md](BENCHMARKS.md). Полный `pnpm check` включает Python-проверки harness.
+
+## 13. Автоматическая проверка настоящего браузера
+
+Playwright запускает собранное демо в изолированных browser contexts и сам поднимает HTTP-сервер. Установка браузера и запуск:
+
+```sh
+pnpm exec playwright install chromium
+pnpm test:browser
+pnpm check:all
+```
+
+На Linux для системных библиотек может потребоваться `pnpm exec playwright install --with-deps chromium`; описание установки — [Playwright](https://playwright.dev/docs/browsers). В CI браузер устанавливается отдельным job; внешнего запуска CI пока не было.
+
+Если Chrome уже установлен, можно проверить его явно:
+
+```sh
+HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
+```
+
+Именно этот вариант прошёл локально с Chrome 155.0.8059.84/Linux. Bundled Chromium — стандартный вариант конфигурации, его локальный запуск здесь отдельно не подтверждён. Firefox/WebKit и мобильные браузеры не заявлены проверенными.
+
+По умолчанию сервер использует 127.0.0.1:4173 и отклоняет занятый порт. Задать другой: `HOKE_BROWSER_PORT=4174 pnpm test:browser`. Существующий сервер не переиспользуется, чтобы не проверить чужую/старую сборку. Python 3 должен быть доступен.
+
+9 browser tests проверяют реальные module imports, сохранение и reload, видимую v1 до явной миграции, v2 после миграции, сохранность v3, полное удаление reset/clear, повреждённый JSON и SecurityError/отсутствие localStorage без fallback. Очистка повреждённой записи выполняется только явной кнопкой «Удалить данные демо»; обычные чтения сохраняют её. Неожиданные page errors проваливают тест.
+
+При ошибке trace/screenshot сохраняются в игнорируемый test-results; CI прикладывает этот каталог. Данные обычного браузерного профиля пользователя не используются. `pnpm check` выполняет JS/Rust/Python без установленного браузера; `pnpm check:all` добавляет browser suite.
+
+Минимальная Rust-среда проверяется отдельно: `cargo +1.89.0 test --workspace --locked`. Рабочий toolchain для Clippy/rustfmt остаётся 1.97.1; Windows/macOS и физическая потеря питания не проверялись.
+
+## 14. WASM/Worker/OPFS C1
+
+Для сборки установите `rustup target add wasm32-unknown-unknown` и `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. `pnpm build` теперь сначала генерирует wasm assets, затем JS/declarations; публикационный tarball содержит оба каталога. Это build-time требование для checkout, импорт KV/React не загружает WASM.
+
+`pnpm check:js` дополнительно запускает 16 actual-WASM adapter tests через `pnpm test:wasm`. Полный browser suite теперь также проверяет 15 OPFS/WASM scenarios и одно OPFS демо. Данные и ожидаемые исходы — [OPFS.md](OPFS.md). Browser CI устанавливает Rust target/CLI перед сборкой. Старые девять KV-демо тестов остаются отдельными сценариями.

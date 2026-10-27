@@ -316,8 +316,14 @@ impl<D: Directory> Database<D> {
         if entries.is_empty() {
             return Ok(());
         }
+        // Capacity validation is pure and leaves the existing delta writable.
+        sstable::validate_entries(&entries).map_err(DbError::Sst)?;
         if let Err(error) = self.flush_inner(&entries) {
-            self.poisoned = true;
+            // Table/generation limits precede file creation. IO failures can
+            // have an unknown publication outcome and must still poison.
+            if !matches!(&error, DbError::Limit(_)) {
+                self.poisoned = true;
+            }
             return Err(error);
         }
         Ok(())
@@ -382,7 +388,10 @@ impl<D: Directory> Database<D> {
             || self.tables.iter().any(SSTable::has_tombstones))
             && let Err(error) = self.compact_inner()
         {
-            self.poisoned = true;
+            // The only Limit here is generation exhaustion, before creation.
+            if !matches!(&error, DbError::Limit(_)) {
+                self.poisoned = true;
+            }
             return Err(error);
         }
         let cleanup = self.collect_garbage()?;

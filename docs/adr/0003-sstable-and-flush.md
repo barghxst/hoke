@@ -40,7 +40,7 @@ Manifest: magic/version, WAL generation, количество SST, возрас�
 5. rename manifest.tmp → MANIFEST без удаления старого manifest перед rename.
 6. sync_directory. Только после успеха переключить активные handles и освободить старую memtable.
 
-Любая ошибка flush блокирует новые mutations до reopen. После ошибки rename/dir sync исход публикации может быть неизвестен; reopen выбирает единственный видимый MANIFEST и проверяет все его ссылки. База не продолжает писать в старый WAL после неясного результата.
+Ошибки flush после начала файловой операции блокируют новые mutations до reopen. Чистая проверка SST capacity и ошибки лимита числа таблиц/поколений до создания файлов оставляют базу доступной: можно выполнить compact/GC или уменьшить delta и повторить. После ошибки rename/dir sync исход публикации может быть неизвестен; reopen выбирает единственный видимый MANIFEST и проверяет все его ссылки. База не продолжает писать в старый WAL после неясного результата.
 
 ## Сбои и мусор
 
@@ -48,7 +48,7 @@ Manifest: magic/version, WAL generation, количество SST, возрас�
 
 Полный corrupt SST/manifest и missing referenced file вызывают ошибку. Не используем fallback к прошлому manifest: он может не содержать подтверждённых после flush записей. Corrupt payload обнаруживается при чтении соответствующего ключа; open не выполняет scrub всех value bytes.
 
-NativeDirectory синхронизирует каталог после создания/rename, ошибки передаются. Проверяется Linux/process crashes и fault injection; вызовы fsync не равнозначны доказательству power-loss safety на всех ФС/ОС. Windows/macOS и OPFS не заявляются протестированными.
+NativeDirectory фиксирует абсолютный canonical path при open, поэтому последующая смена cwd не перенаправляет операции в другой каталог. Каталог синхронизируется после создания/rename, ошибки передаются. Проверяется Linux/process crashes и fault injection; вызовы fsync не равнозначны доказательству power-loss safety на всех ФС/ОС. Windows/macOS и OPFS не заявляются протестированными.
 
 ## Проверки
 

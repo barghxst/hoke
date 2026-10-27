@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "state": "complete",
+  "config": {
+    "keys": 1000,
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "scan_limit": 100,
+    "scan_iterations": 50,
+    "batch_size": 100,
+    "seed": 1
+  },
+  "runs": 3,
+  "storage_label": null,
+  "environment": {
+    "utc": "2026-10-27T11:59:35.547411+00:00",
+    "os": "Linux-7.2.11-arch1-1-x86_64-with-glibc2.44",
+    "cpu": "AMD Ryzen 5 5600 6-Core Processor",
+    "cpu_count": 12,
+    "python": "3.14.8 (main, Oct  2 2026, 10:23:31) [GCC 16.2.1 20260810]",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "git_head": "ce7336b12478530d59a44180dad2aab18987f6ff",
+    "git_status": "M .github/workflows/ci.yml\n M .gitignore\n M AGENTS.md\n M Cargo.lock\n M Cargo.toml\n M README.md\n D crates/stowtree-core/Cargo.toml\n D crates/stowtree-core/README.md\n D crates/stowtree-core/src/batch.rs\n D crates/stowtree-core/src/bin/stowtree.rs\n D crates/stowtree-core/src/database.rs\n D crates/stowtree-core/src/directory.rs\n D crates/stowtree-core/src/engine.rs\n D crates/stowtree-core/src/lib.rs\n D crates/stowtree-core/src/manifest.rs\n D crates/stowtree-core/src/native_directory.rs\n D crates/stowtree-core/src/options.rs\n D crates/stowtree-core/src/scan.rs\n D crates/stowtree-core/src/sstable.rs\n D crates/stowtree-core/src/storage/file.rs\n D crates/stowtree-core/src/storage/memory.rs\n D crates/stowtree-core/src/storage/mod.rs\n D crates/stowtree-core/src/wal.rs\n D crates/stowtree-core/tests/batch.rs\n D crates/stowtree-core/tests/batch_process.rs\n D crates/stowtree-core/tests/cli_batch.rs\n D crates/stowtree-core/tests/cli_compaction.rs\n D crates/stowtree-core/tests/cli_threshold.rs\n D crates/stowtree-core/tests/cli_wal_threshold.rs\n D crates/stowtree-core/tests/compaction.rs\n D crates/stowtree-core/tests/compaction_process.rs\n D crates/stowtree-core/tests/engine.rs\n D crates/stowtree-core/tests/flush.rs\n D crates/stowtree-core/tests/flush_process.rs\n D crates/stowtree-core/tests/process.rs\n D crates/stowtree-core/tests/scan.rs\n D crates/stowtree-core/tests/scan_cli.rs\n D crates/stowtree-core/tests/threshold.rs\n D crates/stowtree-core/tests/threshold_process.rs\n D crates/stowtree-core/tests/wal_threshold.rs\n D crates/stowtree-core/tests/wal_threshold_process.rs\n M docs/BATCHES.md\n M docs/COMPACTION.md\n M docs/MEMTABLE.md\n M docs/PLAN.md\n M docs/PROGRESS.md\n M docs/SCANS.md\n M docs/TESTING.md\n M docs/WAL_THRESHOLD.md\n M docs/adr/0001-store-and-react-contract.md\n M docs/adr/0002-native-storage-and-wal.md\n M docs/adr/0009-native-benchmarks.md\n M examples/web/demo.test.ts\n M examples/web/index.html\n M examples/web/package.json\n M examples/web/smoke.ts\n M package.json\n D packages/stowtree/README.md\n D packages/stowtree/package.json\n D packages/stowtree/src/kv/index.test.ts\n D packages/stowtree/src/kv/index.ts\n D packages/stowtree/src/kv/local-storage.test.ts\n D packages/stowtree/src/kv/local-storage.ts\n D packages/stowtree/src/kv/storage.ts\n D packages/stowtree/src/react/index.test.ts\n D packages/stowtree/src/react/index.ts\n D packages/stowtree/src/react/integration.test.ts\n D packages/stowtree/src/store.test.ts\n D packages/stowtree/src/store.ts\n D packages/stowtree/tsconfig.build.json\n M pnpm-lock.yaml\n M scripts/package-smoke.mjs\n?? crates/hoke-core/\n?? docs/BENCHMARKS.md\n?? docs/RENAMING.md\n?? packages/hoke/\n?? scripts/bench.py\n?? scripts/test_bench.py",
+    "source_sha256": "bdd19bcede0d5782e12d26f53e64c4adaa08bb3d87d17aaeed498d1b765ff9e9",
+    "workdir": "/home/barghest/hoke",
+    "filesystem_findmnt": "{\n   \"filesystems\": [\n      {\n         \"target\": \"/home\",\n         \"source\": \"/dev/mapper/ArchinstallVg-home\",\n         \"fstype\": \"ext4\",\n         \"options\": \"rw,relatime\"\n      }\n   ]\n}",
+    "filesystem_df": "Filesystem                     Type 1024-blocks     Used Available Capacity Mounted on\n/dev/mapper/ArchinstallVg-home ext4   102101944 79445184  17397496      83% /home"
+  },
+  "completed_utc": "2026-10-27T11:59:51.396273+00:00"
+}

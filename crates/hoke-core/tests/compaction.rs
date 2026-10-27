@@ -1,5 +1,8 @@
 //! Full compaction and obsolete-file reclamation against real, exclusively locked files.
 #![cfg(unix)]
+use hoke_core::directory::Directory;
+use hoke_core::storage::{FileStorage, Storage};
+use hoke_core::{Database, DbError, KeyValue, NativeDirectory, ScanOptions};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fs;
@@ -7,9 +10,6 @@ use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use hoke_core::directory::Directory;
-use hoke_core::storage::{FileStorage, Storage};
-use hoke_core::{Database, DbError, KeyValue, NativeDirectory, ScanOptions};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);

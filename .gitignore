@@ -3,3 +3,13 @@ dist/
 coverage/
 *.tsbuildinfo
 /target/
+
+/bench-results/
+__pycache__/
+
+/test-results/
+/playwright-report/
+
+/packages/hoke/wasm/
+
+/packages/hoke/.wasm-build-*/

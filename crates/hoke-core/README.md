@@ -85,3 +85,5 @@ stats.memtable_bytes — текущий payload delta, а не heap footprint и
 DatabaseOptions.max_wal_bytes: Option<u64> задаёт мягкий порог активного WAL, включая header и frame overhead. Минимум16, defaultNone. Перед append непустая delta сбрасывается, если projected WAL length превысит порог; поэтому повторные overwrite с постоянным memtable payload тоже ограничиваются. Одиночный record больше порога допускается, старые WAL/orphans убираются явным GC, это не disk quota.
 
 CLI --db <path> [--memtable-limit N] [--wal-limit N] <command>: флаги до команды в любом порядке, каждый один раз. Любое превышение вызывает один preflush; ошибка preflush не применяет новую запись. [Сценарий, точные byte counts и проверки](../../docs/WAL_THRESHOLD.md) · [ADR 0008](../../docs/adr/0008-wal-threshold.md).
+
+Native benchmark: `pnpm bench` из корня workspace. Методика, JSONL и ограничения — [BENCHMARKS.md](../../docs/BENCHMARKS.md). CLI базы остаётся default-run hoke.

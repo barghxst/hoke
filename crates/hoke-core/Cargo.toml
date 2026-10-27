@@ -1,5 +1,7 @@
 [package]
 name = "hoke-core"
+default-run = "hoke"
+autobins = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,3 +13,11 @@ workspace = true
 
 [dependencies]
 crc32fast = "1.5.3"
+
+[[bin]]
+name = "hoke"
+path = "src/bin/hoke.rs"
+
+[[bin]]
+name = "hoke-bench"
+path = "src/bin/hoke-bench.rs"
