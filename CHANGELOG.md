@@ -2,6 +2,8 @@
 
 ## Unreleased — experimental Hoke
 
+- Подготовлен SST file bridge: существующий Rust SST v1 codec доступен WASM и внутреннему OPFS слою, с tombstones, bounded reads и cleanup. Browser openDB пока WAL-only; публикация SST не включена.
+
 ### JavaScript package
 
 - Synchronous KV with memory and explicit localStorage adapters.

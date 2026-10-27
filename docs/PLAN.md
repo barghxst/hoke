@@ -221,7 +221,7 @@ store.subscribe(listener);
 ## 7. Этап C — WASM, Worker и OPFS
 
 - Подготовить WASM-сборку ядра и типизированный протокол сообщений.
-- Синхронные OPFS handles открываются внутри Worker; JS API асинхронный.
+- Синхронные OPFS handles открываются внутри Worker; JS API асинхронный. C5a: существующий SST v1 codec доступен WASM и внутреннему OPFS file layer; candidate create/open/lookup/scan/close реализованы без root publication. Выбор commit-протокола остаётся в предложенном ADR0014; реализация примитивов — ADR0015.
 - `openDB(name)` с проверкой возможностей, явными ошибками и закрытием ресурсов.
 - Единственный владелец БД на первом этапе; второе открытие получает ясную ошибку.
 - Версионирование протокола, отмена/таймаут, завершение Worker, обработка неожиданных исключений. C4: structural DBAbortSignal, pre-abort без dispatch; после dispatch abort завершает всю сессию/all pending с ABORTED, исход mutation может быть сохранён, без retry. Signal open действует только до ACK; cleanup предшествует callbacks. Решение — ADR0013.

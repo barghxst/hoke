@@ -211,3 +211,11 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 В `/examples/opfs/` кнопка «Прервать текущий запрос» доступна во время open/get/put/delete/scan. Быстрый запрос может завершиться раньше клика; детерминированный UI-тест удерживает загрузку WASM, отменяет open и затем проверяет повторное открытие и сохранение. После отмены отправленного запроса заново откройте базу и прочитайте состояние: запись могла сохраниться, автоматического повтора нет.
 
 Полный прогон: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all`. Контракт и сигнатуры — [ADR0013](adr/0013-browser-cancellation.md). Отдельное исследование будущей публикации SST — [OPFS capabilities](OPFS_CAPABILITIES.md); probe не доказывает crash/power-loss durability.
+
+## 18. Внутренний SST file bridge (C5a)
+
+Этот срез переносит существующие SST файлы через WASM в OPFS; openDB пока не переключается на SST. `pnpm test:wasm` после сборки включает28 сценариев, из них8 новых для SST: tombstones/empty/missing, сортировка и framing до I/O, native CRC, short writes, failed sync, indexed scan, границы packet/limit и close.
+
+`tests/browser/sst-files.spec.ts` добавляет4 настоящих OPFS Worker cases: чтение после reopen, preflight без создания файлов, collision/corrupt-open без переписывания и освобождение handle после failed flush с сохранением orphan name. Полный browser suite —54 scenarios. Код файлового слоя внутренний, отдельного пользовательского UI пока нет.
+
+Проверки выполняются после интеграции цельного среза: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all`. Эти сценарии не подтверждают root publication, browser-process crash или power-loss safety. Контракт и ограничения — [ADR0015](adr/0015-sst-wasm-files.md).

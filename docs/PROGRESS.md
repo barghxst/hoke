@@ -21,15 +21,15 @@
 
 ## Последняя общая проверка
 
-C4: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции отмены операций и демо:
+C5a: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции SST codec/WASM/OPFS file layer:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
 - 252 JS tests в10 файлах, включая13 registry и121 DB client/collection cases;
-- 20 actual-WASM tests,196 Rust tests,11 Python benchmark tests;
+- 28 actual-WASM tests,196 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 50 настоящих Chrome155/Linux browser tests:37 OPFS/WASM +4 OPFS demo +9 KV demo.
+- 54 настоящих Chrome155/Linux browser tests:41 OPFS/WASM/SST +4 OPFS demo +9 KV demo.
 
-Rust/WASM source и durable formats в C4 не менялись; MSRV1.89.0 с196 Rust tests проверен в C2. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
+SST v1/WAL v1 и Worker protocol2 не менялись; Rust SST visibility и WASM binding расширены в C5a. MSRV1.89.0 с196 Rust tests ранее проверен в C2; повторный MSRV прогон для C5a не выполнялся. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -260,3 +260,13 @@ C3 не завершает C: browser SST publication/compaction, atomic batch �
 - [x] Полный check:252 JS +196 Rust +20 WASM +11 Python +50 Chrome tests; Biome, typecheck, rustfmt и strict Clippy прошли. WAL v1, Worker protocol2 и зависимости не менялись.
 
 Код и демо фиксируются отдельным локальным коммитом под barghxst без assistant/agent attribution и push. Следующая файловая архитектура подготовлена отдельно как предложенный ADR0014: три варианта публикации SST/compaction, реальные API-наблюдения и fault matrix. Это исследование, не принятое решение о новом формате. Probe воспроизведён root на isolated Chrome155; successful move/reload не доказывают atomic durability или потерю питания.
+
+## C5a: реальные SST файлы через WASM/OPFS
+
+- [x] Публичный экспериментальный Rust модуль sstable для платформенных биндингов: существующие reader/writer, lookup Missing/Deleted/Value, index metadata, preflight. Native codec bytes и поведение не менялись.
+- [x] WasmSst создаёт пустой candidate, синхронизирует файл, открывает immutable reader; lookup и scan сохраняют tombstones. Strict sorted packet проверяется до I/O; limits32MiB/1M input entries/key64KiB/value16MiB.
+- [x] Внутренний OPFS слой создаёт случайное свободное имя с обязательством caller directory ownership, держит exclusive sync handle, закрывает Rust/handle на success/error и сообщает имя возможного orphan после failed create. Missing/corrupt open не создаёт/не переписывает файл.
+- [x] 8 actual-WASM cases и4 настоящих OPFS cases добавлены после реализации среза; общий прогон после интеграции прошёл:252 JS +196 Rust +28 WASM +11 Python +54 Chrome tests. Biome, build, typecheck, tarball, rustfmt и strict Clippy прошли.
+- [x] ADR0015 описывает реализацию; package exports и openDB не расширялись. Подготовленные файлы не объявляются commit; WAL/memtable не удаляются и не переключаются.
+
+По уточнению пользователя сначала реализуем связный код базы, затем проводим интеграционную проверку; отдельный publication simulator отложен. Следующая граница — authoritative publication SST/compaction по предложенному ADR0014, где выбор нового durable container ещё не принят. Этот срез не подменяет это решение и не завершает C. Packet cap не ограничивает heap; scan может декодировать одну выбранную запись до обнаружения переполнения бюджета. Browser batch и DB migrations пока отсутствуют.

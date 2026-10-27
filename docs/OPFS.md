@@ -169,3 +169,9 @@ DBAbortSignal — публичный structural type с readonly aborted:boolean
 Успешный ACK снимает listener и timer до callbacks подписчиков. Abort signal уже подтверждённой mutation, в том числе из её callback, не отменяет commit и не закрывает соединение. Ошибка callback по-прежнему возвращается как DBNotificationError с committed:true. Если abort обработан раньше ACK после dispatch, соединение завершается с неизвестным исходом; поздний ответ игнорируется и notifications не синтезируются. Signal открытия действует только до ACK open, затем его abort не влияет на открытую базу.
 
 Listeners снимаются также при error ACK, timeout, transport/protocol failure и close. Сломанный custom removeEventListener, бросающий исключение, не меняет ACK и не оставляет pending/timer; если сторонний объект сохранил callback, тот уже инертен. Стандартные signals освобождают listeners полностью. Контракт и альтернативы — [ADR0013](adr/0013-browser-cancellation.md).
+
+## Подготовка SST (C5a)
+
+В ядре и WASM реализованы чтение/построение существующих SST v1; внутренний файловый слой `packages/hoke/src/db/sst-files.ts` создаёт кандидатов и открывает их через OPFS sync handles. Он сохраняет tombstones, различает пустые значения и missing, поддерживает bounded scan и освобождает handles при close/ошибке. Файлы совместимы с native codec, новый durable format не введён.
+
+Это подготовка файловой части, а не переключение openDB на SST. WAL остаётся источником истины; flush/compaction/batch в браузерном API ещё не подключены. Публикация кандидатов и reclamation требуют отдельного решения. Контракт — [ADR0015](adr/0015-sst-wasm-files.md), варианты commit — [ADR0014](adr/0014-opfs-multifile-publication-proposal.md).
