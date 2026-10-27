@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { WasmSst, WasmWal } from "../packages/hoke/wasm/hoke_wasm.js";
+import init, { WasmReadView, WasmSst, WasmWal } from "../packages/hoke/wasm/hoke_wasm.js";
 
 // Run the actual generated Rust/WASM artifact. This adapter only replaces the
 // byte transport; it does not emulate Engine, the WAL codec, or recovery.
@@ -862,4 +862,198 @@ test("actual WASM SST merge streams beyond scan row limits and the 32 MiB transf
     assert.equal(value.at(-1), 99);
   }
   close(table);
+});
+
+const readScan = (view, wal, start, end, prefix, flags = 0, limit = 100) =>
+  unpackScan(view.scan(wal, start, end, prefix, flags, limit));
+
+test("actual WASM read view overlays live WAL on newest SST including deletes and reinsertion", () => {
+  const older = mergeSource([
+    [bytes(), bytes()],
+    [bytes(1), bytes(10)],
+    [bytes(2), bytes(20)],
+    [bytes(3), bytes(30)],
+  ]);
+  const newer = mergeSource([
+    [bytes(1), bytes(11)],
+    [bytes(2), null],
+    [bytes(4), bytes(40)],
+  ]);
+  const originals = [older.bytes.slice(), newer.bytes.slice()];
+  const wal = new WasmWal(new ByteAdapter());
+  const view = new WasmReadView([older, newer]);
+  assert.deepEqual(view.get(wal, bytes()), bytes());
+  assert.deepEqual(view.get(wal, bytes(1)), bytes(11));
+  assert.equal(view.get(wal, bytes(2)), undefined);
+  assert.equal(view.get(wal, bytes(9)), undefined);
+  wal.delete(bytes(1));
+  wal.put(bytes(2), bytes(21));
+  assert.equal(view.get(wal, bytes(1)), undefined);
+  assert.deepEqual(view.get(wal, bytes(2)), bytes(21));
+  assert.deepEqual(readScan(view, wal), [
+    [bytes(), bytes()],
+    [bytes(2), bytes(21)],
+    [bytes(3), bytes(30)],
+    [bytes(4), bytes(40)],
+  ]);
+  wal.put(bytes(1), bytes(12));
+  assert.deepEqual(view.get(wal, bytes(1)), bytes(12));
+  const copy = view.get(wal, bytes(3));
+  copy.fill(99);
+  assert.deepEqual(view.get(wal, bytes(3)), bytes(30));
+  close(view);
+  close(wal);
+  assert.deepEqual([older.bytes, newer.bytes], originals);
+});
+
+test("actual WASM read view applies bounds, prefix, reverse and live-row limits across sources", () => {
+  const source = mergeSource([
+    [bytes(0), bytes(10)],
+    [bytes(1), bytes(11)],
+    [bytes(1, 0), bytes(12)],
+    [bytes(1, 255), bytes(13)],
+    [bytes(2), bytes(14)],
+    [bytes(255), bytes(15)],
+  ]);
+  const wal = new WasmWal(new ByteAdapter());
+  wal.delete(bytes(1));
+  wal.put(bytes(1, 1), bytes(16));
+  const view = new WasmReadView([source]);
+  const rows = [
+    [bytes(0), bytes(10)],
+    [bytes(1, 0), bytes(12)],
+    [bytes(1, 1), bytes(16)],
+    [bytes(1, 255), bytes(13)],
+    [bytes(2), bytes(14)],
+    [bytes(255), bytes(15)],
+  ];
+  assert.deepEqual(readScan(view, wal), rows);
+  assert.deepEqual(
+    readScan(view, wal, undefined, undefined, bytes(1), 4, 2),
+    rows.slice(2, 4).toReversed(),
+  );
+  assert.deepEqual(readScan(view, wal, bytes(1, 0), bytes(2), undefined, 3), rows.slice(2, 5));
+  assert.deepEqual(readScan(view, wal, bytes(2), bytes(2), undefined, 2), rows.slice(4, 5));
+  assert.deepEqual(readScan(view, wal, bytes(2), bytes(2)), []);
+  assert.deepEqual(readScan(view, wal, bytes(2), undefined, bytes(1)), []);
+  assert.deepEqual(readScan(view, wal, undefined, undefined, bytes(255)), rows.slice(-1));
+  assert.deepEqual(readScan(view, wal, undefined, undefined, bytes(), 4), rows.toReversed());
+  assert.deepEqual(readScan(view, wal, undefined, undefined, undefined, 0, 0), []);
+  close(view);
+  close(wal);
+});
+
+test("actual WASM read view preflights source caps and never writes or closes immutable adapters", () => {
+  const untouched = {};
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush", "close"])
+    untouched[method] = () => assert.fail(`read view performed ${method}`);
+  assert.throws(() => new WasmReadView(Array(65).fill(untouched)), /maximum 64/);
+  const source = savedSst();
+  const before = source.bytes.slice();
+  for (const method of ["writeAt", "truncate", "flush"])
+    source[method] = () => assert.fail(`read view performed ${method}`);
+  const wal = new WasmWal(new ByteAdapter());
+  const view = new WasmReadView(Array(64).fill(source));
+  assert.deepEqual(view.get(wal, bytes(0)), bytes(4));
+  assert.deepEqual(
+    readScan(view, wal),
+    sstRows.filter(([, value]) => value !== null),
+  );
+  close(view);
+  close(wal);
+  assert.deepEqual(source.bytes, before);
+});
+
+test("actual WASM read view validates options and keys before source I/O even with zero limit", () => {
+  const source = savedSst();
+  const view = new WasmReadView([source]);
+  const wal = new WasmWal(new ByteAdapter());
+  for (const method of ["getSize", "readAt", "writeAt", "truncate", "flush"])
+    source[method] = () => assert.fail(`invalid read performed ${method}`);
+  assert.throws(() => view.get(wal, new Uint8Array(65537)), /65536/);
+  assert.throws(() => readScan(view, wal, bytes(2), bytes(1), undefined, 0, 0), /range/);
+  assert.throws(() => readScan(view, wal, undefined, undefined, undefined, 8, 0), /flags/);
+  assert.throws(() => readScan(view, wal, undefined, undefined, undefined, 0, 1001), /1000/);
+  for (let index = 0; index < 3; index++) {
+    const args = [undefined, undefined, undefined, 0, 0];
+    args[index] = new Uint8Array(65537);
+    assert.throws(() => readScan(view, wal, ...args), /65536/);
+  }
+  assert.deepEqual(readScan(view, wal, undefined, undefined, undefined, 0, 0), []);
+  close(view);
+  close(wal);
+});
+
+test("actual WASM read view supports empty sources and rejects either closed lifetime", () => {
+  const wal = new WasmWal(new ByteAdapter());
+  const empty = new WasmReadView([]);
+  wal.put(bytes(1), bytes(2));
+  assert.deepEqual(readScan(empty, wal), [[bytes(1), bytes(2)]]);
+  empty.close();
+  empty.close();
+  assert.throws(() => empty.get(wal, bytes(1)), /closed/);
+  assert.throws(() => readScan(empty, wal, undefined, undefined, undefined, 0, 0), /closed/);
+  empty.free();
+  const view = new WasmReadView([]);
+  wal.close();
+  assert.throws(() => view.get(wal, bytes(1)), /WAL.*closed/);
+  assert.throws(() => readScan(view, wal, undefined, undefined, undefined, 0, 0), /WAL.*closed/);
+  close(view);
+  wal.free();
+});
+
+test("actual WASM read view propagates source corruption and I/O while skipping shadowed payloads", () => {
+  const corruptHeader = savedSst();
+  corruptHeader.bytes[0] ^= 1;
+  const before = corruptHeader.bytes.slice();
+  assert.throws(() => new WasmReadView([corruptHeader]), /SST/);
+  assert.deepEqual(corruptHeader.bytes, before);
+  const source = mergeSource([[bytes(1), bytes(9)]]);
+  source.bytes[32 + 28 + 1] ^= 1;
+  const view = new WasmReadView([source]);
+  const wal = new WasmWal(new ByteAdapter());
+  assert.throws(() => view.get(wal, bytes(1)), /checksum/);
+  assert.throws(() => readScan(view, wal), /checksum/);
+  wal.delete(bytes(1));
+  assert.equal(view.get(wal, bytes(1)), undefined);
+  assert.deepEqual(readScan(view, wal), []);
+  close(view);
+  const newer = mergeSource([[bytes(1), null]]);
+  const shadowed = new WasmReadView([source, newer]);
+  assert.deepEqual(readScan(shadowed, wal), []);
+  close(shadowed);
+  const ioSource = savedSst();
+  const ioView = new WasmReadView([ioSource]);
+  ioSource.readAt = () => {
+    throw new Error("injected read view failure");
+  };
+  assert.throws(() => ioView.get(wal, bytes(0)), /injected read view failure/);
+  assert.throws(() => readScan(ioView, wal), /injected read view failure/);
+  close(ioView);
+  close(wal);
+});
+
+test("actual WASM read view enforces live row limits and exact full-packet byte budget", () => {
+  const many = mergeSource(
+    Array.from({ length: 1001 }, (_, i) => [bytes(i >>> 8, i & 255), bytes()]),
+  );
+  const wal = new WasmWal(new FullByteAdapter());
+  let view = new WasmReadView([many]);
+  assert.equal(readScan(view, wal, undefined, undefined, undefined, 0, 1000).length, 1000);
+  close(view);
+  const maximum = 16 * 1024 * 1024;
+  const large = new Uint8Array(maximum);
+  const source = mergeSource([[bytes(0), large]]);
+  view = new WasmReadView([source]);
+  wal.put(bytes(1), large.subarray(0, maximum - 22));
+  assert.equal(view.scan(wal, undefined, undefined, undefined, 0, 100).length, 32 * 1024 * 1024);
+  wal.put(bytes(1), large.subarray(0, maximum - 21));
+  assert.throws(() => view.scan(wal, undefined, undefined, undefined, 0, 100), /packet.*budget/);
+  wal.put(bytes(1), large);
+  assert.throws(() => view.scan(wal, undefined, undefined, undefined, 0, 100), /payload.*budget/);
+  assert.equal(readScan(view, wal, undefined, undefined, undefined, 0, 1).length, 1);
+  wal.delete(bytes(1));
+  assert.equal(readScan(view, wal).length, 1);
+  close(view);
+  close(wal);
 });

@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::ops::Bound;
 
+use hoke_core::read::{get_from_sources, scan_sources_with_budget};
 use hoke_core::sstable::{
     Lookup, MAX_ENTRIES, MAX_MERGE_SOURCES, SSTable, merge_tables, write_table,
 };
@@ -245,26 +246,7 @@ impl WasmWal {
         let rows = engine
             .scan_with_budget(options, MAX_PACKET_BYTES)
             .map_err(binding_error)?;
-        let packet_bytes = rows.iter().try_fold(4_usize, |total, (key, value)| {
-            total
-                .checked_add(8)
-                .and_then(|size| size.checked_add(key.len()))
-                .and_then(|size| size.checked_add(value.len()))
-                .filter(|size| *size <= MAX_PACKET_BYTES)
-                .ok_or_else(|| binding_error("scan packet exceeds 32 MiB byte budget"))
-        })?;
-        let mut packet = Vec::new();
-        packet
-            .try_reserve_exact(packet_bytes)
-            .map_err(|_| binding_error("could not allocate scan packet"))?;
-        packet.extend_from_slice(&(rows.len() as u32).to_le_bytes());
-        for (key, value) in rows {
-            packet.extend_from_slice(&(key.len() as u32).to_le_bytes());
-            packet.extend_from_slice(&(value.len() as u32).to_le_bytes());
-            packet.extend_from_slice(&key);
-            packet.extend_from_slice(&value);
-        }
-        Ok(packet)
+        pack_live_rows(rows)
     }
 
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), JsError> {
@@ -297,6 +279,29 @@ const MAX_PACKET_BYTES: usize = 32 * 1024 * 1024;
 const MAX_KEY_BYTES: usize = 65536;
 const MAX_VALUE_BYTES: usize = 16 * 1024 * 1024;
 const TOMBSTONE: u32 = u32::MAX;
+
+fn pack_live_rows(rows: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Vec<u8>, JsError> {
+    let packet_bytes = rows.iter().try_fold(4_usize, |total, (key, value)| {
+        total
+            .checked_add(8)
+            .and_then(|size| size.checked_add(key.len()))
+            .and_then(|size| size.checked_add(value.len()))
+            .filter(|size| *size <= MAX_PACKET_BYTES)
+            .ok_or_else(|| binding_error("scan packet exceeds 32 MiB byte budget"))
+    })?;
+    let mut packet = Vec::new();
+    packet
+        .try_reserve_exact(packet_bytes)
+        .map_err(|_| binding_error("could not allocate scan packet"))?;
+    packet.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+    for (key, value) in rows {
+        packet.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        packet.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        packet.extend_from_slice(&key);
+        packet.extend_from_slice(&value);
+    }
+    Ok(packet)
+}
 
 /// An immutable native-format SST over a caller-owned synchronous byte adapter.
 /// Creation synchronizes one candidate file; it does not publish a database commit.
@@ -592,5 +597,76 @@ mod tests {
         for value in [3.0, -1.0, 0.5, f64::NAN, f64::INFINITY] {
             assert!(checked_count(value, 2).is_err());
         }
+    }
+}
+
+/// A live WAL overlay over immutable SST sources ordered oldest to newest.
+/// Table indexes are owned here; adapter handles remain owned by the caller.
+#[wasm_bindgen]
+pub struct WasmReadView {
+    tables: Option<Vec<SSTable<JsStorage>>>,
+}
+
+#[wasm_bindgen]
+impl WasmReadView {
+    #[wasm_bindgen(constructor)]
+    pub fn new(adapters: Vec<JsValue>) -> Result<WasmReadView, JsError> {
+        if adapters.len() > MAX_MERGE_SOURCES {
+            return Err(binding_error("too many read view sources (maximum 64)"));
+        }
+        let mut tables = Vec::new();
+        tables
+            .try_reserve_exact(adapters.len())
+            .map_err(|_| binding_error("could not allocate read view sources"))?;
+        for adapter in adapters {
+            tables.push(SSTable::open(JsStorage(adapter.unchecked_into())).map_err(binding_error)?);
+        }
+        Ok(Self {
+            tables: Some(tables),
+        })
+    }
+
+    pub fn get(&mut self, wal: &WasmWal, key: &[u8]) -> Result<Option<Vec<u8>>, JsError> {
+        if key.len() > MAX_KEY_BYTES {
+            return Err(binding_error("read view key exceeds 65536 bytes"));
+        }
+        let tables = self
+            .tables
+            .as_mut()
+            .ok_or_else(|| binding_error("read view is closed"))?;
+        let engine = wal
+            .engine
+            .as_ref()
+            .ok_or_else(|| binding_error("WAL engine is closed"))?;
+        get_from_sources(engine, tables, key).map_err(binding_error)
+    }
+
+    /// Packed live rows using the same framing and flags as WasmWal.scan.
+    pub fn scan(
+        &mut self,
+        wal: &WasmWal,
+        start: Option<Vec<u8>>,
+        end: Option<Vec<u8>>,
+        prefix: Option<Vec<u8>>,
+        flags: u8,
+        limit: u32,
+    ) -> Result<Vec<u8>, JsError> {
+        let options = sst_scan_options(start, end, prefix, flags, limit)?;
+        let tables = self
+            .tables
+            .as_mut()
+            .ok_or_else(|| binding_error("read view is closed"))?;
+        let engine = wal
+            .engine
+            .as_ref()
+            .ok_or_else(|| binding_error("WAL engine is closed"))?;
+        let rows = scan_sources_with_budget(engine, tables, options, MAX_PACKET_BYTES)
+            .map_err(binding_error)?;
+        pack_live_rows(rows)
+    }
+
+    /// Drop immutable indexes without closing caller-owned JS handles.
+    pub fn close(&mut self) {
+        self.tables.take();
     }
 }
