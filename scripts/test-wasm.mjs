@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { WasmReadView, WasmSst, WasmWal } from "../packages/hoke/wasm/hoke_wasm.js";
+import init, {
+  WasmJournal,
+  WasmReadView,
+  WasmSst,
+  WasmWal,
+} from "../packages/hoke/wasm/hoke_wasm.js";
 
 // Run the actual generated Rust/WASM artifact. This adapter only replaces the
 // byte transport; it does not emulate Engine, the WAL codec, or recovery.
@@ -1056,4 +1061,287 @@ test("actual WASM read view enforces live row limits and exact full-packet byte 
   assert.equal(readScan(view, wal).length, 1);
   close(view);
   close(wal);
+});
+
+function joinRefs(...refs) {
+  const packet = new Uint8Array(refs.length * 24);
+  refs.forEach((ref, index) => {
+    packet.set(ref, index * 24);
+  });
+  return packet;
+}
+
+function refOffset(ref) {
+  return Number(new DataView(ref.buffer, ref.byteOffset, ref.byteLength).getBigUint64(8, true));
+}
+
+function rootGeneration(packet) {
+  return new DataView(packet.buffer, packet.byteOffset, packet.byteLength).getBigUint64(0, true);
+}
+
+function savedJournal() {
+  const adapter = new ByteAdapter();
+  const journal = new WasmJournal(adapter);
+  const table = journal.append(2, bytes(9, 0, 255));
+  const wal = journal.append(1, bytes(8, 7));
+  journal.commit(table, wal);
+  const root = journal.root();
+  close(journal);
+  return { adapter, table, wal, root };
+}
+
+function failedJournalOpenPreserves(adapter, expected) {
+  const before = adapter.bytes.slice();
+  assert.throws(() => new WasmJournal(adapter), expected);
+  assert.deepEqual(adapter.bytes, before);
+  assert.equal(adapter.truncations, 0);
+}
+
+test("actual WASM journal commits opaque WAL/SST and reopens the exact root", () => {
+  const { adapter, table, wal, root } = savedJournal();
+  assert.equal(adapter.syncs, 3);
+  assert.equal(table.length, 24);
+  assert.equal(table[0], 2);
+  assert.equal(wal[0], 1);
+  assert.equal(rootGeneration(root), 1n);
+  const journal = new WasmJournal(adapter);
+  assert.deepEqual(journal.root(), root);
+  assert.deepEqual(journal.read(table), bytes(9, 0, 255));
+  assert.deepEqual(journal.read(wal), bytes(8, 7));
+  assert.equal(journal.discarded_tail_bytes(), 0n);
+  assert.equal(journal.records_scanned(), 3n);
+  assert.equal(journal.is_poisoned(), false);
+  const nextWal = journal.append(1, bytes(4));
+  journal.commit(table, joinRefs(wal, nextWal));
+  assert.equal(rootGeneration(journal.root()), 2n);
+  close(journal);
+});
+
+test("actual WASM journal preserves complete unpublished segments without creating a root", () => {
+  const adapter = new ByteAdapter();
+  let journal = new WasmJournal(adapter);
+  assert.deepEqual(journal.root(), bytes());
+  const ref = journal.append(1, bytes(4, 5));
+  const before = adapter.bytes.slice();
+  assert.equal(adapter.syncs, 1);
+  close(journal);
+  assert.equal(adapter.syncs, 1);
+  assert.deepEqual(adapter.bytes, before);
+  journal = new WasmJournal(adapter);
+  assert.deepEqual(journal.root(), bytes());
+  assert.deepEqual(journal.read(ref), bytes(4, 5));
+  assert.equal(journal.records_scanned(), 1n);
+  journal.commit(bytes(), ref);
+  assert.equal(rootGeneration(journal.root()), 1n);
+  close(journal);
+});
+
+test("actual WASM journal validates kind numbers and descriptor packets before adapter I/O", () => {
+  const adapter = new ByteAdapter();
+  const journal = new WasmJournal(adapter);
+  const table = journal.append(2, bytes(1));
+  const wal = journal.append(1, bytes(2));
+  const before = adapter.bytes.slice();
+  adapter.getSize =
+    adapter.readAt =
+    adapter.writeAt =
+    adapter.flush =
+      () => {
+        assert.fail("validation must finish before adapter I/O");
+      };
+  for (const kind of [0, 3, -1, 257, 1.5, NaN, Infinity]) {
+    assert.throws(() => journal.append(kind, bytes()), /segment kind/);
+  }
+  for (const malformed of [bytes(1), new Uint8Array(23), new Uint8Array(25)]) {
+    assert.throws(() => journal.commit(malformed, bytes()), /24-byte/);
+    assert.throws(() => journal.read(malformed), /reference|descriptor|24/);
+  }
+  const reserved = table.slice();
+  reserved[1] = 1;
+  assert.throws(() => journal.commit(reserved, bytes()), /reserved/);
+  assert.throws(() => journal.commit(wal, bytes()), /kind|SST|table/);
+  assert.throws(() => journal.commit(bytes(), table), /kind|WAL/);
+  assert.throws(() => journal.commit(joinRefs(table, table), wal), /duplicate/);
+  const oversized = new Uint8Array(4097 * 24);
+  assert.throws(() => journal.commit(oversized, bytes()), /4096|reference/);
+  const combined = new Uint8Array(2049 * 24);
+  assert.throws(() => journal.commit(combined, combined), /4096|reference/);
+  assert.equal(journal.is_poisoned(), false);
+  assert.deepEqual(adapter.bytes, before);
+  close(journal);
+});
+
+test("actual WASM journal rejects forged and retired descriptors without poisoning writer", () => {
+  const { adapter, table, wal } = savedJournal();
+  const journal = new WasmJournal(adapter);
+  const before = adapter.bytes.slice();
+  const forged = wal.slice();
+  new DataView(forged.buffer).setBigUint64(8, BigInt(refOffset(wal) + 1), true);
+  assert.throws(() => journal.read(forged), /reference|segment|known/);
+  assert.throws(() => journal.commit(table, forged), /reference|segment|known/);
+  assert.deepEqual(adapter.bytes, before);
+  assert.equal(journal.is_poisoned(), false);
+  journal.commit(table, bytes());
+  assert.throws(() => journal.read(wal), /reference|segment|known/);
+  assert.throws(() => journal.commit(table, wal), /reference|segment|known/);
+  journal.commit(table, bytes());
+  assert.equal(rootGeneration(journal.root()), 3n);
+  close(journal);
+});
+
+test("actual WASM journal recovers a complete root after final sync fails without ACK", () => {
+  const adapter = new ByteAdapter();
+  let journal = new WasmJournal(adapter);
+  const wal = journal.append(1, bytes(99));
+  const realFlush = adapter.flush.bind(adapter);
+  let barriers = 0;
+  adapter.flush = () => {
+    realFlush();
+    if (++barriers === 2) throw new Error("injected root sync failure");
+  };
+  assert.throws(() => journal.commit(bytes(), wal), /injected root sync failure/);
+  assert.deepEqual(journal.root(), bytes());
+  assert.equal(journal.is_poisoned(), true);
+  assert.throws(() => journal.append(1, bytes()), /poison|reopen|unknown/);
+  assert.throws(() => journal.commit(bytes(), wal), /poison|reopen|unknown/);
+  close(journal);
+  adapter.flush = realFlush;
+  journal = new WasmJournal(adapter);
+  assert.equal(rootGeneration(journal.root()), 1n);
+  assert.deepEqual(journal.read(wal), bytes(99));
+  close(journal);
+});
+
+test("actual WASM journal pre-root sync failure keeps previous root and poisons writer", () => {
+  const { adapter, table, root } = savedJournal();
+  let journal = new WasmJournal(adapter);
+  const pending = journal.append(1, bytes(55));
+  adapter.flush = () => {
+    throw new Error("injected pre-root sync failure");
+  };
+  const before = adapter.bytes.slice();
+  assert.throws(() => journal.commit(table, pending), /injected pre-root sync failure/);
+  assert.deepEqual(adapter.bytes, before);
+  assert.deepEqual(journal.root(), root);
+  assert.equal(journal.is_poisoned(), true);
+  close(journal);
+  delete adapter.flush;
+  journal = new WasmJournal(adapter);
+  assert.deepEqual(journal.root(), root);
+  assert.deepEqual(journal.read(pending), bytes(55));
+  close(journal);
+});
+
+test("actual WASM journal partial append poisons until reopen truncates only incomplete tail", () => {
+  const { adapter, root } = savedJournal();
+  const valid = adapter.bytes.slice();
+  let journal = new WasmJournal(adapter);
+  const write = adapter.writeAt.bind(adapter);
+  let writes = 0;
+  adapter.writeAt = (buffer, offset) => {
+    if (++writes === 3) throw new Error("injected partial append failure");
+    return write(buffer, offset);
+  };
+  assert.throws(() => journal.append(1, bytes(5, 6, 7)), /injected partial append/);
+  assert.equal(journal.is_poisoned(), true);
+  assert.throws(() => journal.append(1, bytes()), /poison|reopen|unknown/);
+  const tail = adapter.bytes.length - valid.length;
+  assert.ok(tail > 0 && tail < 32);
+  close(journal);
+  delete adapter.writeAt;
+  journal = new WasmJournal(adapter);
+  assert.deepEqual(adapter.bytes, valid);
+  assert.deepEqual(journal.root(), root);
+  assert.equal(journal.discarded_tail_bytes(), BigInt(tail));
+  assert.equal(adapter.truncations, 1);
+  close(journal);
+});
+
+test("actual WASM journal discards incomplete payload EOF but never a corrupt full record", () => {
+  const { adapter, table, root } = savedJournal();
+  let journal = new WasmJournal(adapter);
+  journal.append(1, bytes(0, 1, 2, 3, 4));
+  close(journal);
+  adapter.resize(adapter.bytes.length - 2);
+  journal = new WasmJournal(adapter);
+  assert.equal(journal.discarded_tail_bytes(), 39n);
+  assert.deepEqual(journal.root(), root);
+  close(journal);
+  const corrupt = new ByteAdapter(adapter.bytes);
+  corrupt.bytes[refOffset(table) + 32] ^= 1;
+  failedJournalOpenPreserves(corrupt, /checksum|CRC|crc/);
+  const corruptTail = new ByteAdapter(adapter.bytes);
+  corruptTail.resize(corruptTail.bytes.length + 32);
+  failedJournalOpenPreserves(corruptTail, /magic|header/);
+});
+
+test("actual WASM journal validates file header/version/limits before destructive recovery", () => {
+  const { adapter } = savedJournal();
+  for (const size of [1, 8, 31]) {
+    failedJournalOpenPreserves(
+      new ByteAdapter(adapter.bytes.subarray(0, size)),
+      /header|short|truncated/,
+    );
+  }
+  const version = new ByteAdapter(adapter.bytes);
+  const versionView = new DataView(version.bytes.buffer);
+  versionView.setUint32(8, 2, true);
+  versionView.setUint32(28, crc32(version.bytes.subarray(0, 28)), true);
+  failedJournalOpenPreserves(version, /version/);
+  const excessive = new ByteAdapter(adapter.bytes);
+  const excessiveView = new DataView(excessive.bytes.buffer);
+  excessiveView.setBigUint64(32 + 16, 256n * 1024n * 1024n + 1n, true);
+  excessiveView.setUint32(32 + 28, crc32(excessive.bytes.subarray(32, 60)), true);
+  failedJournalOpenPreserves(excessive, /limit|256|payload/);
+  const unsafe = new ByteAdapter();
+  unsafe.getSize = () => 2 ** 53;
+  unsafe.readAt = () => assert.fail("unsafe file length must be rejected before read");
+  failedJournalOpenPreserves(unsafe, /safe integer/);
+});
+
+test("actual WASM journal read rechecks CRC and empty root excludes old segments", () => {
+  const { adapter, table, wal } = savedJournal();
+  let journal = new WasmJournal(adapter);
+  const payloadOffset = refOffset(wal) + 32;
+  adapter.bytes[payloadOffset] ^= 1;
+  assert.throws(() => journal.read(wal), /checksum|CRC|crc/);
+  assert.equal(journal.is_poisoned(), true);
+  const writes = adapter.writes;
+  assert.throws(() => journal.commit(bytes(), bytes()), /reopen|outcome/);
+  assert.equal(adapter.writes, writes);
+  adapter.bytes[payloadOffset] ^= 1;
+  close(journal);
+  journal = new WasmJournal(adapter);
+  journal.commit(bytes(), bytes());
+  assert.equal(journal.root().length, 24);
+  assert.equal(rootGeneration(journal.root()), 2n);
+  assert.throws(() => journal.read(table), /reference|segment|known/);
+  assert.throws(() => journal.read(wal), /reference|segment|known/);
+  const empty = journal.append(1, bytes());
+  assert.deepEqual(journal.read(empty), bytes());
+  close(journal);
+});
+
+test("actual WASM journal close is idempotent without commit/sync or JS handle close", () => {
+  const adapter = new ByteAdapter();
+  const journal = new WasmJournal(adapter);
+  const ref = journal.append(1, bytes(1));
+  const before = adapter.bytes.slice();
+  const syncs = adapter.syncs;
+  adapter.flush = () => assert.fail("close must not synchronize");
+  journal.close();
+  journal.close();
+  assert.equal(adapter.syncs, syncs);
+  assert.deepEqual(adapter.bytes, before);
+  for (const action of [
+    () => journal.append(1, bytes()),
+    () => journal.commit(bytes(), bytes()),
+    () => journal.read(ref),
+    () => journal.root(),
+    () => journal.discarded_tail_bytes(),
+    () => journal.records_scanned(),
+    () => journal.is_poisoned(),
+  ])
+    assert.throws(action, /closed/);
+  journal.free();
 });
