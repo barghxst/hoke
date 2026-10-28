@@ -107,4 +107,4 @@ function TaskView() {
 
 Нужны secure context, Dedicated Worker и OPFS synchronous handles. `openDatabase` использует тот же container namespace, что `openDB(name,{mode:"container-v1"})`. Прежний WAL с тем же именем остаётся отдельной базой, автоматического переноса нет. Если записывать в document namespace через byte API, именно приложение отвечает за совместимый UTF-8/JSON.
 
-После `pnpm demo` откройте [демо задач](http://127.0.0.1:8000/examples/documents/): добавьте, отметьте и удалите задачу, сохраните пару, перезагрузите страницу. [Архитектура](ARCHITECTURE.md) · [Byte API и гарантии](OPFS.md) · [ADR решения](adr/0021-document-database-usability.md).
+После `pnpm demo` автоматически откроется меню демо. Выберите «Список задач» или нажмите его ссылку в консоли: добавьте, отметьте и удалите задачу, сохраните пару, перезагрузите страницу. [Архитектура](ARCHITECTURE.md) · [Byte API и гарантии](OPFS.md) · [ADR решения](adr/0021-document-database-usability.md).

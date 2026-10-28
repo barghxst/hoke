@@ -2,6 +2,12 @@
 
 Дата: 28 октября 2026.
 
+## Запуск и навигация демо
+
+`pnpm demo` заменён на Node launcher: сборка JS/WASM с отдельными timestamp BUILD logs, HTTP-сервер, автоматическое открытие системного браузера после readiness и четыре кликабельные ссылки. Занятый порт заменяется следующим свободным с предупреждением о смене origin; --strict-port сохраняет фиксированный порт, --no-open подходит для headless/CI, --no-build использует существующие assets. Ctrl+C останавливает сервер/сборку; ошибка сборки не запускает сервер, ошибка browser opener оставляет сервер и ссылки доступными.
+
+Добавлено главное меню с тремя примерами, навигация во всех демо и отсутствие просмотра каталогов. Сервер отдаёт только examples и собранные JS/WASM, поддерживает MIME/HEAD и пишет status/method/URL/duration logs. Playwright теперь использует тот же launcher вместо Python server; test:demo включён в check:js. Python остаётся нужен для benchmark harness, но не для demo.
+
 ## Удобный document API
 
 Добавлен `openDatabase(name,{timeoutMs?,signal?})` поверх существующего container-v1. Прежние openDB/default WAL и byte collections сохранены. Новый API предоставляет типизированные JSON-коллекции со строковыми ключами, get/set/delete/list, atomic writeBatch и локальными подписками. Strict JSON codec фиксирует вход до очереди, проверяет сохранённое представление синхронным validator, возвращает frozen snapshots и не перезаписывает повреждённые/несовместимые данные. Physical namespace учитывается в лимитах до persistent I/O.
@@ -47,13 +53,14 @@
 
 ## Последняя общая проверка
 
-После добавления document API, React-хука и демо `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл:
+После обновления launcher и навигации демо `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
 - 327 JS tests в15 файлах: прежние283 и44 новых document/React cases;
 - 60 actual-WASM tests,254 Rust tests,11 Python benchmark tests;
+- 9 Node CLI/HTTP integration tests: auto-open readiness, ошибка opener/build, занятый порт, MIME, ограничения static routes и Ctrl+C в том числе при зависшей сборке;
 - rustfmt, Clippy с -D warnings;
-- 94 настоящих Chrome155/Linux browser tests:78 OPFS/WASM/SST/read-view/container/document +5 OPFS demo +2 document demo +9 KV demo.
+- 96 настоящих Chrome155/Linux browser tests:78 OPFS/WASM/SST/read-view/container/document +5 OPFS demo +2 document demo +9 KV demo +2 demo navigation. Все browser cases используют тот же Node launcher, что pnpm demo.
 
 Persistent SST v1/WAL v1/container v1 не менялись; Worker transport повышен до protocol3 для публичных container операций. Все254 Rust tests также повторно прошли на MSRV1.89.0 после рефакторинга. Статус внешнего GitHub CI не проверен: локальный gh не авторизован. Другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
