@@ -195,3 +195,13 @@ Listeners снимаются также при error ACK, timeout, transport/pro
 Внутренний openContainerJournal(directory,name,{create}) открывает явный `.hkc` файл через exclusive sync handle. Создание требует create:true; старые `.wal` не импортируются. append лишь подготавливает segment; commit передаёт отдельные списки refs SST и WAL. payload пока opaque: этот слой не проверяет его как KV/WAL/SST и не является пользовательской транзакцией базы. Close не выполняет automatic commit. Имя контейнера не переключает существующий openDB — тот пока WAL-only.
 
 Лимиты:256MiB на segment,4096 active refs и4096 pending segments, offsets до2^53−1. Recovery проверяет payload CRC порциями64KiB; read_segment материализует весь выбранный payload. File растёт append-only; reclamation, power-loss safety и устойчивость первоначального имени этим срезом не доказываются. Формат и порядок восстановления — [ADR0018](adr/0018-container-journal-v1.md).
+
+## Контейнерная KV Database (C6b)
+
+Реализованы ContainerDatabase, WasmContainerDb и внутренний openContainerDatabase(directory,name,{create}). Это KV внутри одного `.hkc`: put/delete, atomic writeBatch, get/scan, flush, compact и stats. Каждая mutation/batch сохраняет полный immutable WAL v1 segment и подтверждается новым root. После reopen восстанавливается только active state root; orphan segments не добавляются в memtable.
+
+Flush переносит dirty changes в SST с tombstones и убирает WAL refs из root. Полная compaction объединяет SST и memtable, поэтому удалённые ключи можно исключить; старые segment bytes остаются физически в контейнере. SST читаются через bounded read-only views одного handle, без загрузки всех values в map. Memtable — derived state без второго растущего WAL buffer.
+
+Перед ремонтом incomplete outer tail проверяются active SST metadata и целые inner WAL payload: immutable partial/corrupt WAL не ремонтируется. Любой неизвестный исход persistent root publication или source corruption требует reopen; stale fallback отсутствует. KV output staging ограничен256MiB, dirty payload32MiB, active SST/WAL по64, batch1024ops/32MiB. При исчерпании table cap нужен compact; compaction output больше256MiB возвращает capacity error без замены root. File size не уменьшается.
+
+Публичный openDB пока не переключён на новый backend; Worker protocol2 и KV/localStorage API прежние. Внутренний adapter работает в Dedicated Worker и не импортирует legacy `.wal`. [ADR0019](adr/0019-container-kv.md) описывает coordinator и границы. Запускаемый native CLI-пример — [container.rs](../crates/hoke-core/examples/container.rs), команды в [TESTING.md](TESTING.md#22-контейнерная-kv-database-c6b).

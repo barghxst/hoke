@@ -243,3 +243,22 @@ View использует переданный живой WAL и не сохра
 Проверяются golden bytes, CRC-repaired invalid semantics, строгие refs/sequence/generation, все partial record tails, оба commit barriers и ошибки write/flush/sync/truncate, unknown final-sync outcome, отсутствие fallback/repair при полной corruption, pending без auto publication, dropped/interior/future/forged refs, caps до I/O и poisoning после CRC reread. Recovery читает payload порциями64KiB, metadata ограничены active/pending sets.
 
 OPFS Worker проверяет explicit roots/reopen, staged opaque segments, incomplete EOF truncate, неизменность файла после full corruption, ownership, validation/options copy до создания и полный root после потери финального flush acknowledgement. Это file publication tests, а не KV batch API, process kill или power-loss proof. Формат/порядок commit — [ADR0018](adr/0018-container-journal-v1.md).
+
+## 22. Контейнерная KV Database (C6b)
+
+Запускаемый Rust-пример использует один новый `.hkc`, существующие WAL-каталоги не трогает. Команды используют UTF-8 keys/values; scan ограничен1000 строками и32MiB payload:
+
+```sh
+container_demo=$(mktemp -d)
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" batch put theme dark put count 7
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" flush
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" delete count
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" compact
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" get theme
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" scan
+cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" info
+```
+
+Ожидается value="dark", одна строка theme/dark; generation=5,tables=1,wal_segments=0,memtable_entries=0,memtable_bytes=0. Каждый вызов — отдельный процесс и reopen файла. Compact публикует активный набор, но не уменьшает размер append-only container. Ошибочные команды/размеры проверяются до создания файла; get/scan/info/maintenance не создают отсутствующий файл.
+
+Общий прогон после реализации прошёл: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` —252 JS/254 Rust/60 WASM/11 Python/79 Chrome. MSRV — `cargo +1.89.0 test --workspace --locked`, все254 Rust tests прошли. Новые OPFS cases в container-db.spec.ts проверяют batch/flush/compact/reopen, binary range/reverse/WAL masking, invalid input без нового root, inner corruption до ремонта outer tail, failed final sync с целым batch после reopen. Файловый пример — отдельная проверка сохранения между процессами, не power-loss proof. Public openDB UI ещё не переключён; [ADR0019](adr/0019-container-kv.md).

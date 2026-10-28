@@ -10,6 +10,8 @@
 
 - Реализован новый append-only container journal v1: CRC framing/root refs, two-barrier commit, strict recovery, poisoned writer и внутренний OPFS `.hkc` adapter. Старые WAL/SST форматы и openDB mode сохранены.
 
+- Реализован контейнерный KV coordinator через Rust/WASM/внутренний OPFS: atomic batch, get/scan, SST flush, full compaction и bounded source views. Добавлен native CLI example; публичный openDB пока WAL-only.
+
 ### JavaScript package
 
 - Synchronous KV with memory and explicit localStorage adapters.

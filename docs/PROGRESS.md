@@ -21,15 +21,15 @@
 
 ## Последняя общая проверка
 
-C6a: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции container journal, OPFS adapter и terminal CRC reread policy:
+C6b: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции ContainerDatabase, WASM/OPFS adapter и запускаемого native примера:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
 - 252 JS tests в10 файлах, включая13 registry и121 DB client/collection cases;
-- 52 actual-WASM tests,235 Rust tests,11 Python benchmark tests;
+- 60 actual-WASM tests,254 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 74 настоящих Chrome155/Linux browser tests:61 OPFS/WASM/SST/read-view/container +4 OPFS demo +9 KV demo.
+- 79 настоящих Chrome155/Linux browser tests:66 OPFS/WASM/SST/read-view/container +4 OPFS demo +9 KV demo.
 
-SST v1/WAL v1 и Worker protocol2 не менялись; добавлен отдельный container v1 с новым magic/root journal по выбранному пользователем направлению. Все235 Rust tests также прошли на MSRV1.89.0. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
+SST v1/WAL v1 и Worker protocol2 не менялись; добавлен отдельный container v1 с новым magic/root journal по выбранному пользователем направлению. Все254 Rust tests также прошли на MSRV1.89.0. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -308,3 +308,15 @@ C3 не завершает C: browser SST publication/compaction, atomic batch �
 - [x] При интеграции уточнён terminal CRC reread contract: старый WASM сценарий пытался commit после внешнего восстановления байта в том же poisoned object. Обновлён на явный reopen и проверку отсутствия записи до него; повторный общий прогон прошёл.
 
 Journal — настоящий publication primitive, ещё не контейнерная KV Database. Он не декодирует segment payload как WAL/SST, не собирает root из put/delete и не подключён к openDB. Следующий срез — KV coordinator поверх journal и ранее реализованного SST/read path. Read_segment копирует выбранный payload до256MiB, recovery читает CRC порциями64KiB. Append-only file growth, первоначальное имя, eviction и power loss остаются явно ограниченными; reclamation/automatic migration не включены.
+
+## C6b: KV coordinator в одном контейнере
+
+- [x] ContainerDatabase<S>: атомарные put/delete/write_batch, get/scan, flush, full compaction, stats и poison. Immutable WAL v1 segment на mutation/batch, новый root — единственная граница подтверждения; memtable меняется только после root success.
+- [x] SharedStorage и ReadSegment дают bounded readonly SST views одного handle. Mixed-source read helpers используют volatile derived Engine без растущего второго WAL buffer; MemoryStorage::into_bytes позволяет передать SST staging без второй полной копии.
+- [x] Journal deferred recovery не ремонтирует outer tail до проверки всех active inner SST metadata/WAL payload. Immutable partial/future/corrupt WAL не ремонтируется, root не откатывается.
+- [x] Preflush прежних данных до превышения32MiB dirty/64WAL/inherited SST entrycap;65-й SST требует compact. Flush сохраняет tombstones, полная compaction исключает удалённые ключи только из всего active state. Root switch подготовлен до публикации; ошибки после persistent append требуют reopen.
+- [x] WasmContainerDb и внутренний OPFS ContainerDB: строгий byte batch packet, live scan32MiB/1000, stats, lifecycle/ownership. Публичный openDB/Worker protocol2 ещё WAL-only.
+- [x] Запускаемый native example container.rs: batch → flush → отдельный get → delete → compact → scan/info. Реально выполнено между отдельными процессами: theme=dark сохранилась, count удалён, generation5/tables1/wal0/memtable0.
+- [x] 6 unit foundation +13 coordinator Rust tests,8 actual-WASM и5 real OPFS cases. Полный check:252 JS +254 Rust +60 WASM +11 Python +79 Chrome. Все254 Rust tests также прошли на1.89.0.
+
+ADR0019 фиксирует payload reuse и coordinator. Браузерные unknown-final-sync проверки восстанавливают целый batch без partial publication; invalid input не меняет root и не poison. Последующие source errors не возвращают старые values. File всё ещё append-only; staging256MiB и cap64 таблиц ограничивают первую реализацию. Не выполнены browser-process crash/power-loss proof, physical reclaim, automatic migration и публичное переключение openDB. Следующий срез — явный container-v1 mode в Worker/client с существующим lifecycle/subscriptions и demo.
