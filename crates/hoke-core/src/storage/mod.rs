@@ -13,7 +13,7 @@ mod memory;
 pub use file::FileStorage;
 pub use memory::MemoryStorage;
 
-/// A single exclusively owned byte store used by the future engine.
+/// A single exclusively owned byte store used by the storage engines.
 ///
 /// A successful write writes all supplied bytes; a failed write may have written
 /// a prefix. Callers must not assume rollback or continue committing after an I/O
