@@ -6,6 +6,7 @@
 //! Manual compaction reclaims obsolete files. Atomic directory batches use manifest publication; no production durability claim.
 //! Memory storage is explicit and volatile; file storage has no automatic fallback.
 
+pub mod container;
 pub mod storage;
 
 mod engine;
