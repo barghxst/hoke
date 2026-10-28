@@ -2,6 +2,14 @@
 
 Дата: 28 октября 2026.
 
+## Удобный document API
+
+Добавлен `openDatabase(name,{timeoutMs?,signal?})` поверх существующего container-v1. Прежние openDB/default WAL и byte collections сохранены. Новый API предоставляет типизированные JSON-коллекции со строковыми ключами, get/set/delete/list, atomic writeBatch и локальными подписками. Strict JSON codec фиксирует вход до очереди, проверяет сохранённое представление синхронным validator, возвращает frozen snapshots и не перезаписывает повреждённые/несовместимые данные. Physical namespace учитывается в лимитах до persistent I/O.
+
+Общая FIFO document-сессия выполняет maintenance перед mutation при 32 SST или 48 WAL segments и завершает принятые операции до close. Автоматического retry нет; физический файл не сокращается. Дополнительный stats request на mutation — явная цена простой политики. Миграций схемы DB, cross-tab routing и нового долговременного формата этот срез не добавляет.
+
+`useDBValue(collection,key)` из hoke/react объединяет async чтение и подписку: loading/success/error, защита от stale responses, cleanup/StrictMode и SSR без Worker. Новый [пример задач](../examples/documents/index.html) проверяет обычный пользовательский сценарий без выбора режимов и кодирования байтов. [DATABASE.md](DATABASE.md) — основной guide для приложений, [ADR0021](adr/0021-document-database-usability.md) фиксирует контракты.
+
 ## Рефакторинг доменов и описание проекта
 
 По запросу пользователя перед дальнейшим развитием DB проведён рефакторинг структуры:
@@ -39,13 +47,13 @@
 
 ## Последняя общая проверка
 
-После полного рефакторинга доменов `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл заново:
+После добавления document API, React-хука и демо `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
-- 283 JS tests в11 файлах, включая132 DB client,15 collection,15 registry и3 batch helper cases;
+- 327 JS tests в15 файлах: прежние283 и44 новых document/React cases;
 - 60 actual-WASM tests,254 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 89 настоящих Chrome155/Linux browser tests:75 OPFS/WASM/SST/read-view/container +5 OPFS demo +9 KV demo.
+- 94 настоящих Chrome155/Linux browser tests:78 OPFS/WASM/SST/read-view/container/document +5 OPFS demo +2 document demo +9 KV demo.
 
 Persistent SST v1/WAL v1/container v1 не менялись; Worker transport повышен до protocol3 для публичных container операций. Все254 Rust tests также повторно прошли на MSRV1.89.0 после рефакторинга. Статус внешнего GitHub CI не проверен: локальный gh не авторизован. Другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
@@ -67,7 +75,7 @@ Persistent SST v1/WAL v1/container v1 не менялись; Worker transport п
 - Пакет остаётся private и имеет версию 0.0.0: это кандидат функциональности v0.1, а не опубликованный релиз.
 - Реальная browser matrix и расширенная совместимость React/Node пока не проверены.
 - События между вкладками и разными KV-экземплярами не реализованы.
-- Rust: этап B, работают WAL Engine и Database с SSTable/manifest и ручным flush. JS DB API/WASM/RN/devtools пока отсутствуют. Этапы C–F не начаты.
+- Native Rust и browser DB через WASM/Worker/OPFS реализованы; typed document API добавлен поверх container-v1. React Native/devtools, DB migrations, physical reclamation и расширенные container crash/model проверки остаются впереди.
 - Atomic write batch реализован по ADR 0006, см. текущий срез ниже. Браузерная проверка этапа A остаётся открытой и не подменяется Rust-тестами.
 
 ## Исправление сценария просмотра миграции

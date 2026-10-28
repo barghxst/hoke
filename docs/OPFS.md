@@ -1,5 +1,7 @@
 # Экспериментальная Rust/WASM база в браузере
 
+Для обычных объектов используйте [openDatabase и JSON-коллекции](DATABASE.md): строковые ключи, типизированные значения, автоматическое логическое обслуживание и React useDBValue. Ниже описан низкоуровневый openDB и его контракты.
+
 hoke/db выполняет Rust в Dedicated Worker с настоящим OPFS. Default wal-v1 сохраняет прежний WAL-only Engine; явный container-v1 предоставляет SST, atomic batch и compaction в одном файле. KV/localStorage и React entry points не загружают WASM при импорте. Native multi-file Database с manifest остаётся отдельным Rust API.
 
 ## Подготовка

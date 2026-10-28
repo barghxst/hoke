@@ -55,7 +55,7 @@ try {
   const consumer = `
     import assert from 'node:assert/strict';
     import { createKV, createStore, defineStore, createLocalStorage } from 'hoke/kv';
-    import { openDB, DBError, DBNotificationError } from 'hoke/db';
+    import { openDB, openDatabase, DBError, DBNotificationError } from 'hoke/db';
     const subscriberError = new DBNotificationError([new Error('listener')]);
     assert(subscriberError instanceof AggregateError);
     assert.equal(subscriberError.committed, true);
@@ -68,6 +68,7 @@ try {
     await assert.rejects(openDB('server'), error => error instanceof DBError && error.code === 'UNSUPPORTED');
     await assert.rejects(openDB('server', { mode: 'container-v1' }), error => error instanceof DBError && error.code === 'UNSUPPORTED');
     await assert.rejects(openDB('server', { mode: 'invalid' }), error => error instanceof DBError && error.code === 'INVALID_ARGUMENT');
+    await assert.rejects(openDatabase('ssr-pre-aborted', { signal: { aborted: true, addEventListener() {}, removeEventListener() {} } }), error => error.code === 'ABORTED');
     assert.equal(typeof globalThis.window, 'undefined');
     assert.throws(() => import.meta.resolve('react'), { code: 'ERR_MODULE_NOT_FOUND' });
     const kv = createKV();
@@ -113,7 +114,7 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
-    import { openDB, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry, type DBAbortSignal, type DBOperationOptions, type DBBatchOperation, type DBStats, type DBMode } from 'hoke/db';
+    import { openDB, openDatabase, DocumentError, type Database, type Collection, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry, type DBAbortSignal, type DBOperationOptions, type DBBatchOperation, type DBStats, type DBMode } from 'hoke/db';
     const signal: DBAbortSignal = {
       aborted: false,
       addEventListener(_type, _listener, _options) {},
@@ -167,6 +168,25 @@ try {
       return rows.length + relative.length;
     }
     void inspect;
+    type Task = { text: string; done: boolean };
+    const isTask = (value: unknown): value is Task => typeof value === 'object' && value !== null && 'text' in value && typeof value.text === 'string' && 'done' in value && typeof value.done === 'boolean';
+    async function documents(db: Database) {
+      const tasks: Collection<Task> = db.collection('tasks', { validate: isTask });
+      await tasks.set('one', { text: 'hello', done: false }, options);
+      const task: Task | undefined = await tasks.get('one', options);
+      const rows: Array<{key: string; value: Task}> = await tasks.list({ prefix: 'o', limit: 10 });
+      await tasks.writeBatch([{type: 'set', key: 'two', value: {text: 'two', done: false}}, {type: 'delete', key: 'one'}]);
+      tasks.subscribeRange({ prefix: 'o' }, () => {})();
+      // @ts-expect-error Values follow the collection's runtime schema type.
+      tasks.set('bad', { text: 1, done: false });
+      // @ts-expect-error JSON collection keys are strings.
+      tasks.get(new Uint8Array());
+      const error = new DocumentError('INVALID_DATA', 'bad JSON');
+      void task; void rows; void error;
+      await db.close();
+    }
+    const ergonomic: Promise<Database> = openDatabase('documents', { signal, timeoutMs: 100 });
+    void ergonomic; void documents;
     const definition = defineStore({
       key: 'typed', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } =>
@@ -221,7 +241,7 @@ try {
     import assert from 'node:assert/strict';
     import { createElement } from 'react';
     import { renderToString } from 'react-dom/server';
-    import { useValue, useStore } from 'hoke/react';
+    import { useValue, useStore, useDBValue } from 'hoke/react';
     import { createKV, createStore, defineStore } from 'hoke/kv';
     const store = createStore(createKV(), defineStore({
       key: 'ssr', version: 1, defaults: () => 3,
@@ -229,6 +249,9 @@ try {
     }));
     function Counter() { return createElement('span', null, useValue(store) + useStore(store, value => value)); }
     assert.equal(renderToString(createElement(Counter)), '<span>6</span>');
+    const collection = { get() { throw new Error('SSR read'); }, subscribe() { throw new Error('SSR subscribe'); } };
+    function Document() { return createElement('span', null, useDBValue(collection, 'one').status); }
+    assert.equal(renderToString(createElement(Document)), '<span>loading</span>');
   `,
   );
   run("node", ["react-consumer.mjs"], directory);
@@ -236,7 +259,7 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
-    import { useValue, useStore } from 'hoke/react';
+    import { useValue, useStore, useDBValue } from 'hoke/react';
     const store = createStore(createKV<unknown>(), defineStore({
       key: 'react-types', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } => typeof value === 'object' && value !== null && 'count' in value && typeof value.count === 'number',
@@ -245,6 +268,11 @@ try {
       const count: number = useStore(store, value => value.count);
       const whole: { count: number } = useValue(store);
       return count + whole.count;
+    }
+    function Document(props: { collection: import('hoke/db').Collection<{count: number}> }) {
+      const state: import('hoke/react').DBValueState<{count: number}> = useDBValue(props.collection, 'one');
+      if (state.status === 'success') { const count: number | undefined = state.value?.count; return count; }
+      return state.status;
     }
     // @ts-expect-error Selector must see the declared store value type.
     useStore(store, value => value.missing);

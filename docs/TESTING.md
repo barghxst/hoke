@@ -270,3 +270,11 @@ cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" info
 Full check после интеграции прошёл:283 JS/254 Rust/60 WASM/11 Python/89 Chrome. Новые9 public container cases проверяют SST lifecycle, namespace/locks isolation, callback failures, collection batch/abort, invalid requests, corrupt root без переписывания и lost batch ACK с полным recovery. Новый demo case дополняет4 прежних WAL/cancel UI scenarios. Tarball consumer проверяет новые mode/batch/stats types без DOM/React и SSR import.
 
 CLI low-level пример из предыдущего раздела остаётся доступен. Protocol3 — версия транспорта, generation — root counter, schema version — отдельное понятие. Durable версии WAL/SST/container не менялись. [ADR0020](adr/0020-public-container-mode.md) фиксирует API, callbacks и ограничения. Проверки выполняются после интеграции среза; npm publish не запускается.
+
+## Удобный document API
+
+После `pnpm demo` откройте http://127.0.0.1:8000/examples/documents/. Добавьте задачу, переключите «Выполнено», перезагрузите страницу и убедитесь, что значение сохранилось. Удалите задачу и снова перезагрузите страницу. «Добавить две задачи атомарно» сохраняет обе записи одной группой. Интерфейс не требует byte encoding, выбора mode и вызова flush/compact.
+
+`tests/browser/document-database.spec.ts` проверяет реальный container путь: Unicode/BOM ключи и names, ranges, batch/notifications/isolation/reopen, 110 последовательных overwrite с автоматическим обслуживанием и сохранение удалений. Инъекция несовместимого JSON через byte API проверяет INVALID_DATA и неизменность raw value/файла. `documents-demo.spec.ts` проверяет полный UI workflow и безопасный вывод сохранённого HTML-подобного текста.
+
+Document unit tests покрывают strict JSON/UTF-8/validator, snapshots до очереди, физические лимиты namespace до maintenance, FIFO и close, неизвестные ошибки без автоматического retry. React hook tests проверяют начальное чтение, commit invalidation, stale reads, смену ключей/коллекций, StrictMode, cleanup и SSR. Tarball smoke проверяет новый API и типы без DOM/React, затем useDBValue и server render из установленного пакета.

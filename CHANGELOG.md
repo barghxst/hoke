@@ -2,6 +2,9 @@
 
 ## Unreleased — experimental Hoke
 
+- Добавлен удобный `openDatabase` с типизированными JSON-коллекциями, строковыми ключами, CRUD/list, атомарным batch и строгой runtime-валидацией. Контейнер выбирается автоматически, логическое обслуживание выполняется перед записью при достижении порогов. Прежний byte API/default WAL сохранён.
+- Добавлен `useDBValue(collection,key)` с loading/success/error, защитой от устаревших ответов и SSR без Worker. Новое демо задач использует document API.
+
 - Подготовлен SST file bridge: существующий Rust SST v1 codec доступен WASM и внутреннему OPFS слою, с tombstones, bounded reads и cleanup. Файловая подготовка предшествовала подключению контейнера ниже.
 
 - Добавлено потоковое объединение SST-кандидатов через Rust/WASM/OPFS: newest wins, tombstones сохранены, исходники не удаляются; Используется в подготовке SST.

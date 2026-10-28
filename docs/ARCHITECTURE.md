@@ -6,9 +6,11 @@ Hoke хранит данные локально, внутри приложени
 
 `hoke/kv` — синхронный TypeScript API со строковыми ключами. Адаптер хранит значения в памяти или localStorage. Стор поверх KV добавляет defaults, проверку значения, версию схемы и миграции. `hoke/react` подписывает компонент на snapshot стора. Для этого пути Rust, WebAssembly и Worker не нужны.
 
-`hoke/db` — асинхронный API с ключами и значениями `Uint8Array`. Порядок ключей — лексикографический по байтам. Он поддерживает упорядоченное чтение, диапазоны и пространства ключей. В браузере данные лежат в OPFS — файловом хранилище конкретного origin. Rust-движок выполняется в Worker через WebAssembly. Подписки DB пока сообщают только об изменениях через текущее соединение; React-хуков поверх DB ещё нет.
+`hoke/db` предлагает `openDatabase` с типизированными JSON-коллекциями поверх низкоуровневого `openDB` с ключами и значениями `Uint8Array`. Порядок ключей — лексикографический по байтам. Он поддерживает упорядоченное чтение, диапазоны и пространства ключей. В браузере данные лежат в OPFS — файловом хранилище конкретного origin. Rust-движок выполняется в Worker через WebAssembly. Подписки DB пока сообщают только об изменениях через текущее соединение; `useDBValue` из hoke/react читает один типизированный документ и обновляет его после локальных commit.
 
 Сохранение в localStorage не переносит значения в OPFS. Имена KV-сторов и DB-коллекций принадлежат разным API.
+
+Для обычного приложения начните с [DATABASE.md](DATABASE.md): этот слой скрывает UTF-8/JSON-кодирование, выбор container-v1 и политику логического обслуживания. Ниже описан byte API, на котором он построен.
 
 ## Кто за что отвечает
 
@@ -129,6 +131,8 @@ Journal проверяет внешний формат, последовател
 | `crates/hoke-core/src/container/codec.rs`                                               | Внешний бинарный формат контейнера                                   |
 | `crates/hoke-core/src/container/journal/`                                               | Recovery, checked I/O и root publication                             |
 | `crates/hoke-core/src/container/database/`                                              | Recovery источников, mutation, maintenance, bounded staging          |
+
+Удобный document API находится в `document-database.ts` (open/composition), `document-contract.ts` (публичные типы), `document-session.ts` (общая очередь и maintenance), `document-collection.ts` (CRUD/batch), `document-codec.ts`/`document-range.ts` (JSON/UTF-8/границы). `open-byte-database.ts` сохраняет прежний openDB. React-хук находится в `react/db-value.ts` и импортирует только тип коллекции, без runtime DB/Worker зависимости.
 
 Фасады `engine.rs`, `database.rs`, `sstable.rs` и `lib.rs` сохраняют публичные пути типов. Внутренние модули не становятся отдельным API. Большой файл разделяется по причине изменения: формат, чтение, commit, lifecycle, а не ради лимита строк. Связные модули и тестовые сценарии могут оставаться длиннее небольшого фасада.
 

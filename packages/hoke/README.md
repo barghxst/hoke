@@ -4,6 +4,8 @@ Local storage for applications: TypeScript KV and reactive stores, plus an exper
 
 This is an unpublished early prototype. Memory and localStorage are implemented. A native Rust database prototype lives in crates/hoke-core; it is not part of this npm package. An experimental hoke/db entry point runs Rust in WASM/Worker/OPFS. Explicit container-v1 supports SST, atomic batches and compaction alongside the default WAL backend. React Native and cross-tab routing remain future work.
 
+For application data, `openDatabase(name)` from `hoke/db` opens typed JSON collections: `db.collection("tasks", { validate: isTask })`, then `set("id", task)`, `get("id")`, `list()` or atomic `writeBatch`. Keys are strings and values are validated immutable JSON snapshots. Logical maintenance runs automatically before writes; no mode choice or manual byte encoding is required. `useDBValue(collection,key)` from `hoke/react` returns loading/success/error and reloads after local commits. The existing byte-level `openDB` API remains available separately.
+
 KV and Store run entirely in TypeScript. Rust is used by `hoke/db`: it owns WAL records, sorted immutable tables, ordered reads and crash recovery. The browser client sends requests to a Dedicated Worker, which runs the shared Rust engine as WebAssembly against an OPFS file. The native CLI uses the same core with ordinary filesystem adapters. The engine uses its own WAL/SST/container formats; it does not embed SQLite or RocksDB.
 
 ```ts

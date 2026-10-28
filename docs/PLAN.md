@@ -1,6 +1,6 @@
 # Hoke: план разработки и самостоятельной работы
 
-Дата: 27 октября 2026. Имя npm-пакета: `hoke`, импорты через `hoke/kv`, `hoke/react`, позже `hoke/db`, `hoke/testing`.
+Дата: 27 октября 2026. Имя npm-пакета: `hoke`, импорты через `hoke/kv`, `hoke/react`, `hoke/db`; `hoke/testing` пока не реализован.
 
 ## 1. Цель и критерий успеха
 
@@ -238,6 +238,10 @@ store.subscribe(listener);
 - Браузерные integration-тесты reload/crash/quota/unsupported environment.
 
 Выход C: веб-демо с реальным OPFS, сборка и примеры, явно описанные поддерживаемые браузеры и ограничения.
+
+### Удобный API поверх byte DB
+
+По запросу пользователя добавлен document-срез C: `openDatabase` выбирает container-v1, JSON-коллекции работают со строковыми ключами и runtime validation, session выполняет логическое обслуживание без ручного flush/compact. `useDBValue` связывает один документ с React. Контракт и ограничения — [ADR0021](adr/0021-document-database-usability.md), обычный путь использования — [DATABASE.md](DATABASE.md). Нет нового формата движка, автоматического импорта WAL или миграций схемы DB.
 
 ## 8. Этап D — доступ из нескольких вкладок
 

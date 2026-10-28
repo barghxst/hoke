@@ -2,14 +2,14 @@
 
 Hoke — библиотека локального хранения данных внутри приложения. Сейчас есть два отдельных API: простой KV для настроек и экспериментальная база с собственным движком на Rust.
 
-| API          | Для чего                                                     | Где хранятся данные                        | Что выполняет код               |
-| ------------ | ------------------------------------------------------------ | ------------------------------------------ | ------------------------------- |
-| `hoke/kv`    | Настройки, флаги, небольшие значения                         | Память или localStorage                    | TypeScript                      |
-| `hoke/react` | Подписка React-компонента на KV-стор                         | Использует выбранный KV                    | TypeScript + React              |
-| `hoke/db`    | Упорядоченные byte keys/values, диапазоны, атомарные batches | Файл OPFS в браузере                       | TypeScript → Worker → Rust/WASM |
-| `hoke-core`  | Сам движок и его native CLI                                  | Обычные файлы или явное хранилище в памяти | Rust                            |
+| API          | Для чего                                                | Где хранятся данные                        | Что выполняет код               |
+| ------------ | ------------------------------------------------------- | ------------------------------------------ | ------------------------------- |
+| `hoke/kv`    | Настройки, флаги, небольшие значения                    | Память или localStorage                    | TypeScript                      |
+| `hoke/react` | React-подписки на KV-стор или документ DB               | Использует выбранный KV/DB                 | TypeScript + React              |
+| `hoke/db`    | Типизированные JSON-коллекции и низкоуровневый byte API | Файл OPFS в браузере                       | TypeScript → Worker → Rust/WASM |
+| `hoke-core`  | Сам движок и его native CLI                             | Обычные файлы или явное хранилище в памяти | Rust                            |
 
-KV, его версии схемы и миграции уже работают. Browser DB умеет чтение, запись, scan, коллекции, подписки и отмену; явный режим `container-v1` добавляет atomic batch, flush и compaction. По умолчанию пока остаётся прежний `wal-v1`.
+KV, его версии схемы и миграции уже работают. Для DB используйте `openDatabase`: строковые ключи, JSON-объекты, runtime-валидация, atomic batch и автоматическое логическое обслуживание. `useDBValue` связывает документ с React. Низкоуровневый `openDB` сохранён отдельно; его default остаётся `wal-v1`.
 
 Пакет ещё не опубликован. React Native запланирован, но не реализован. База экспериментальная; расширенная проверка восстановления после сбоев остаётся следующим этапом.
 
@@ -36,7 +36,7 @@ pnpm install
 pnpm demo
 ```
 
-Откройте [демо KV и миграций](http://127.0.0.1:8000/examples/web/) или [демо DB в OPFS](http://127.0.0.1:8000/examples/opfs/). Если порт 8000 занят, после `pnpm build` можно запустить `python3 -m http.server 8001 --bind 127.0.0.1` и открыть тот же путь на 8001.
+Откройте [список задач на Hoke](http://127.0.0.1:8000/examples/documents/) — добавьте задачу и перезагрузите страницу. Также доступны [KV и миграции](http://127.0.0.1:8000/examples/web/) и [низкоуровневое OPFS-демо](http://127.0.0.1:8000/examples/opfs/). Если порт 8000 занят, после `pnpm build` можно запустить `python3 -m http.server 8001 --bind 127.0.0.1` и открыть тот же путь на 8001.
 
 Простой KV в памяти:
 
@@ -48,27 +48,34 @@ settings.set("theme", "dark");
 console.log(settings.get("theme"));
 ```
 
-База в браузере с сохранением batch:
+База в браузере без ручного кодирования байтов:
 
 ```ts
-import { openDB } from "hoke/db";
+import { openDatabase } from "hoke/db";
 
-const bytes = new TextEncoder();
-const db = await openDB("app", { mode: "container-v1" });
-await db.writeBatch([
-  { type: "put", key: bytes.encode("theme"), value: bytes.encode("dark") },
-  { type: "put", key: bytes.encode("language"), value: bytes.encode("ru") },
-]);
-const theme = await db.get(bytes.encode("theme"));
-console.log(theme === undefined ? undefined : new TextDecoder().decode(theme));
+type Task = { text: string; done: boolean };
+const isTask = (value: unknown): value is Task =>
+  typeof value === "object" &&
+  value !== null &&
+  "text" in value &&
+  typeof value.text === "string" &&
+  "done" in value &&
+  typeof value.done === "boolean";
+
+const db = await openDatabase("app");
+const tasks = db.collection("tasks", { validate: isTask });
+await tasks.set("first", { text: "Попробовать Hoke", done: false });
+const task = await tasks.get("first"); // Task | undefined
+const rows = await tasks.list({ limit: 100 }); // { key: string; value: Task }[]
 await db.close();
 ```
 
-DB хранит байты; преобразование строк или JSON выбирает приложение. Нужны secure context, Dedicated Worker, OPFS sync handles и доступные JS/WASM assets. При timeout/abort после отправки запись могла завершиться: нужно открыть базу заново и прочитать состояние, автоматического retry нет.
+Проверка `validate` нужна и при записи, и при чтении сохранённых данных. Даты/BigInt и другие значения вне строгого JSON явно отклоняются. Для строк и произвольных байтов остаётся `openDB`. Нужны secure context, Dedicated Worker и OPFS sync handles. [Полный пример, batch, React и обработка ошибок](docs/DATABASE.md).
 
 ## Где читать дальше
 
 - [Архитектура и карта исходников](docs/ARCHITECTURE.md) — начать здесь, чтобы понять движок.
+- [Удобный DB API и React](docs/DATABASE.md).
 - [Примеры KV, сторов, React и native CLI](docs/USAGE.md).
 - [Browser DB: API, OPFS и ограничения](docs/OPFS.md).
 - [Запуск проверок и ручные сценарии](docs/TESTING.md).
