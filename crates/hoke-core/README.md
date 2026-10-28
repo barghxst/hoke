@@ -1,6 +1,16 @@
 # hoke-core
 
-Экспериментальный Rust-движок с бинарным WAL. Реализованы `Engine<S>`, `Storage`, файловый и volatile memory backend, put/get/delete, CRC32, replay и обработка неполного EOF append. WAL-only Engine хранит данные в памяти; Database добавляет SSTable, ручной или настраиваемый flush, scan, compaction и atomic batch.
+Платформенно независимый движок локального key/value хранения. Ядро определяет бинарные записи, порядок commit, чтение версий и восстановление; операциями над байтами занимается адаптер `Storage`. В native CLI это обычные файлы, в `hoke/db` — OPFS через Rust/WASM/Worker. KV/localStorage и React-сторы написаны отдельно на TypeScript.
+
+Три координатора используют общие WAL/SST codecs:
+
+- `Engine<S>`: один WAL и производное состояние в памяти.
+- `Database<D>`: каталог WAL/SST и атомарная публикация manifest; flush, scan, compaction, atomic batch и GC.
+- `ContainerDatabase<S>`: один append-only файл с immutable WAL/SST сегментами и журналом commit root; flush/compaction пока не сокращают физический файл.
+
+Движок LSM-подобный, без уровней и фоновой compaction. Это собственные форматы, не обёртка над SQLite/RocksDB. Основные структуры — `BTreeMap`/`BTreeSet` стандартной библиотеки, CRC32 — `crc32fast`.
+
+[Архитектура, путь записи и карта модулей](../../docs/ARCHITECTURE.md) · [API и примеры](../../docs/USAGE.md)
 
 ```rust
 use hoke_core::Engine;
@@ -28,7 +38,7 @@ cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal get theme
 
 Ошибки I/O не маскируются. После ошибки write/flush/sync дальнейшие изменения дают Poisoned до reopen; исход операции на диске может быть неизвестен. Файловый lock не даёт второму кооперативному писателю открыть тот же файл, но не защищает от внешнего кода, обходящего locks.
 
-Проверки: `pnpm check:rust` или rustfmt + cargo clippy + cargo test. Есть инъекции ошибок и реальные process-kill тесты на Unix. Проверенная среда — Linux, Rust 1.97.1. Заявленный API baseline 1.89 отдельно не проверен; Windows/macOS и WASM пока не тестировались. Новый файл синхронизируется, родительский каталог — пока нет, полной гарантии power-loss durability нет.
+Проверки: `pnpm check:rust` или rustfmt + cargo clippy + cargo test. Есть инъекции ошибок и реальные process-kill тесты на Unix. Проверенная среда — Linux, Rust 1.97.1. После структурного рефакторинга все 254 Rust-теста повторно прошли также на MSRV 1.89.0; WASM и Chrome/Linux проверяются отдельными наборами. Windows/macOS пока не проверены. Новый файл синхронизируется, родительский каталог — пока нет, полной гарантии power-loss durability нет.
 
 Подробности: docs/adr/0002-native-storage-and-wal.md и docs/WAL_FORMAT.md в корне репозитория. Публикация crates.io отключена.
 

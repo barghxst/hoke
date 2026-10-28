@@ -59,18 +59,23 @@
 ## 4. Организация репозитория
 
 ```text
-packages/hoke/
-  src/kv/             # контракт, память, localStorage, затем MMKV
-  src/store.ts        # описание стора, snapshots, версии, миграции
-  src/react/          # useStore, useValue
-  src/db/             # будущие TS API, Worker-протокол, подписки
-  src/testing/        # будущие публичные тестовые адаптеры
-examples/web/         # запускаемое демо
-crates/               # создаются на этапе Rust
-  hoke-core/
-  hoke-wasm/
-  hoke-native/
+packages/hoke/src/
+  kv/                  # TypeScript KV и адаптеры
+  store.ts             # схема, snapshots, версии и миграции KV
+  react/               # useStore, useValue
+  db/                  # API, client/session, Worker, OPFS adapters
+crates/
+  hoke-core/src/
+    engine/            # WAL recovery, writes, memory changes
+    sstable/           # format, reader, writer, merge
+    database/          # native lifecycle/publication/maintenance/GC
+    container/         # codec, commit journal, container DB
+    storage/           # platform-independent byte I/O и native files
+  hoke-wasm/src/       # domain bindings и JS Storage bridge
+examples/              # KV и OPFS demos
 docs/
+  ARCHITECTURE.md       # назначение компонентов и путь записи
+  USAGE.md             # подробные примеры
   PLAN.md
   PROGRESS.md
   adr/

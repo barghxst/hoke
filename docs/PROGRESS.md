@@ -2,6 +2,23 @@
 
 Дата: 28 октября 2026.
 
+## Рефакторинг доменов и описание проекта
+
+По запросу пользователя перед дальнейшим развитием DB проведён рефакторинг структуры:
+
+- SST: публичный фасад, формат, reader, writer, merge и существующие тесты разделены.
+- WAL engine: recovery, durable writes, производные изменения и ошибки вынесены в собственные модули.
+- Native Database: lifecycle, операции/пороги, publication, maintenance и GC имеют отдельные границы; данные и lock остаются в одном координаторе.
+- Container: journal отделён от codec и KV coordinator; recovery, checked I/O, mutation, maintenance и bounded staging расположены рядом со своим владельцем.
+- WASM: отдельные биндинги WAL/SST/read view/journal/container, общий Storage bridge и scan codec.
+- Browser DB: публичный contract, операции, Worker session, signal и response validation разделены; runtime imports из внутренних modules обратно в публичный index устранены.
+- Worker: request validation/routing, OPFS/WASM ownership и error translation разделены; SST adapters выделяют packet codec и reader отдельно от candidate lifecycle.
+- Native CLI и benchmark: аргументы, исполнение, deterministic datasets и measurement/reporting разделены с сохранением preflight и границ замеров.
+
+[README](../README.md) объясняет назначение проекта и различие TypeScript KV / Rust DB. [ARCHITECTURE.md](ARCHITECTURE.md) описывает LSM-подобный движок, Storage, WAL/memtable/SST, три координатора, путь commit/recovery, различие версий и карту исходников. Подробные примеры перенесены в [USAGE.md](USAGE.md). Правило разделения по ответственности закреплено в AGENTS.md; произвольный лимит строк не вводился.
+
+Публичные entry points, форматы файлов, Worker protocol3 и существующие сценарии сохранены. Новых dependencies или возможностей DB этот срез не добавляет. Неполные crash/model проверки полного container DB остаются следующим этапом; рефакторинг их не заменяет.
+
 ## Этап A / кандидат v0.1
 
 - [x] Базовый KV, память и localStorage.
@@ -22,7 +39,7 @@
 
 ## Последняя общая проверка
 
-C6c: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после подключения публичного container-v1, batch/maintenance API и демо:
+После полного рефакторинга доменов `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл заново:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
 - 283 JS tests в11 файлах, включая132 DB client,15 collection,15 registry и3 batch helper cases;
@@ -30,7 +47,7 @@ C6c: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после под
 - rustfmt, Clippy с -D warnings;
 - 89 настоящих Chrome155/Linux browser tests:75 OPFS/WASM/SST/read-view/container +5 OPFS demo +9 KV demo.
 
-Persistent SST v1/WAL v1/container v1 не менялись; Worker transport повышен до protocol3 для публичных container операций. Все254 Rust tests также прошли на MSRV1.89.0. Статус внешнего GitHub CI не проверен: локальный gh не авторизован. Другие браузеры/ОС и физическая потеря питания пока не проверялись.
+Persistent SST v1/WAL v1/container v1 не менялись; Worker transport повышен до protocol3 для публичных container операций. Все254 Rust tests также повторно прошли на MSRV1.89.0 после рефакторинга. Статус внешнего GitHub CI не проверен: локальный gh не авторизован. Другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен; актуальный remote статус после push пока не проверен.
 

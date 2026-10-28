@@ -1,8 +1,10 @@
 # hoke
 
-Typed key-value storage, versioned reactive stores, and React hooks.
+Local storage for applications: TypeScript KV and reactive stores, plus an experimental Rust database through WASM.
 
 This is an unpublished early prototype. Memory and localStorage are implemented. A native Rust database prototype lives in crates/hoke-core; it is not part of this npm package. An experimental hoke/db entry point runs Rust in WASM/Worker/OPFS. Explicit container-v1 supports SST, atomic batches and compaction alongside the default WAL backend. React Native and cross-tab routing remain future work.
+
+KV and Store run entirely in TypeScript. Rust is used by `hoke/db`: it owns WAL records, sorted immutable tables, ordered reads and crash recovery. The browser client sends requests to a Dedicated Worker, which runs the shared Rust engine as WebAssembly against an OPFS file. The native CLI uses the same core with ordinary filesystem adapters. The engine uses its own WAL/SST/container formats; it does not embed SQLite or RocksDB.
 
 ```ts
 import { createKV, createStore, defineStore } from "hoke/kv";

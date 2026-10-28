@@ -1,10 +1,17 @@
-//! Experimental WAL and directory-backed sorted-run key/value engines.
+//! Experimental local key/value storage, independent of browser and UI APIs.
 //!
-//! Records are synchronized before publication and replayed on open. Full record
-//! corruption is an error; incomplete EOF appends are discarded during recovery.
-//! Database adds immutable indexed SSTables and atomic manifest publication.
-//! Manual compaction reclaims obsolete files. Atomic directory batches use manifest publication; no production durability claim.
-//! Memory storage is explicit and volatile; file storage has no automatic fallback.
+//! Three coordinators share WAL/SST codecs and ordered read algorithms:
+//! - [`Engine`]: one WAL and its recovered in-memory state;
+//! - [`Database`]: directory-backed WAL/SST files published through a manifest;
+//! - [`ContainerDatabase`]: immutable segments in one append-only commit journal.
+//!
+//! Platform adapters implement [`storage::Storage`]. Writes synchronize before
+//! publication; complete corruption is an error, while physically incomplete EOF
+//! appends may be discarded during recovery. Only directory compaction reclaims
+//! obsolete files; container compaction does not shrink the file.
+//!
+//! Memory storage is explicitly volatile. No automatic fallback or production
+//! durability claim is provided. See docs/ARCHITECTURE.md for the component map.
 
 pub mod container;
 pub mod storage;
