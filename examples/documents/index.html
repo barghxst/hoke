@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hoke — список задач</title>
+    <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, sans-serif;
+    }
+    body {
+      max-width: 720px;
+      margin: 40px auto;
+      padding: 20px;
+    }
+    button,
+    input {
+      font: inherit;
+      padding: 10px;
+    }
+    form,
+    li {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    form input {
+      flex: 1;
+      min-width: 0;
+    }
+    ul {
+      padding: 0;
+      list-style: none;
+    }
+    li {
+      padding: 12px 0;
+      border-bottom: 1px solid #8885;
+    }
+    li span {
+      flex: 1;
+      overflow-wrap: anywhere;
+    }
+    #error {
+      color: #d44;
+      white-space: pre-wrap;
+    }
+    </style>
+  </head>
+  <body>
+    <h1>Задачи с Hoke</h1>
+    <p>Задачи сохраняются в этом браузере и остаются после перезагрузки страницы.</p>
+    <form id="add-form">
+      <label for="task-text">Новая задача</label>
+      <input id="task-text" maxlength="500" required autocomplete="off" disabled>
+      <button id="add" type="submit" disabled>Добавить</button>
+    </form>
+    <p><button id="samples" type="button" disabled>Добавить две задачи атомарно</button></p>
+    <p id="status" role="status">Открываем базу…</p>
+    <p id="error" role="alert"></p>
+    <p id="empty" hidden>Пока задач нет.</p>
+    <ul id="tasks" aria-label="Задачи"></ul>
+    <p>Показаны первые 1000 задач по ключу. Подписка обновляет список в этом подключении.</p>
+    <p>
+      Экспериментальная библиотека: браузер может удалить данные сайта. Не храните здесь
+      единственную копию важных данных.
+    </p>
+    <script type="module">
+    import { openDatabase } from "../../packages/hoke/dist/db/index.js";
+
+    const form = document.querySelector("#add-form");
+    const input = document.querySelector("#task-text");
+    const samples = document.querySelector("#samples");
+    const list = document.querySelector("#tasks");
+    const status = document.querySelector("#status");
+    const error = document.querySelector("#error");
+    const empty = document.querySelector("#empty");
+    let database;
+    let tasks;
+    let unsubscribe;
+    let busy = true;
+    let refreshGeneration = 0;
+    let leaving = false;
+
+    function isTask(value) {
+      return (
+        value !== null &&
+        typeof value === "object" &&
+        typeof value.text === "string" &&
+        typeof value.done === "boolean"
+      );
+    }
+
+    function updateControls() {
+      for (const control of document.querySelectorAll("button, input")) {
+        control.disabled = busy || !tasks;
+      }
+    }
+
+    function showError(cause, mutation = false) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      error.textContent = mutation
+        ? `Операция завершилась с ошибкой. Изменение могло сохраниться; проверьте список после повторного открытия страницы. Автоматического повтора нет.\n${message}`
+        : `Не удалось прочитать базу. ${message}`;
+    }
+
+    async function refresh(onError) {
+      const generation = ++refreshGeneration;
+      try {
+        const entries = await tasks.list({ limit: 1000 });
+        if (generation !== refreshGeneration || leaving) return;
+        list.replaceChildren();
+        empty.hidden = entries.length !== 0;
+        for (const { key, value } of entries) {
+          const row = document.createElement("li");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = value.done;
+          checkbox.setAttribute("aria-label", `Выполнено: ${value.text}`);
+          checkbox.addEventListener("change", () => {
+            const next = { ...value, done: checkbox.checked };
+            void mutate(() => tasks.set(key, next), "Задача обновлена.");
+          });
+          const text = document.createElement("span");
+          text.textContent = value.text;
+          if (value.done) text.style.textDecoration = "line-through";
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "Удалить";
+          remove.setAttribute("aria-label", `Удалить: ${value.text}`);
+          remove.addEventListener("click", () => {
+            void mutate(() => tasks.delete(key), "Задача удалена.");
+          });
+          row.append(checkbox, text, remove);
+          list.append(row);
+        }
+        updateControls();
+      } catch (cause) {
+        if (generation !== refreshGeneration || leaving) return;
+        if (onError) onError(cause);
+        else throw cause;
+      }
+    }
+
+    async function mutate(action, message) {
+      if (busy || !tasks) return;
+      busy = true;
+      error.textContent = "";
+      status.textContent = "Сохраняем…";
+      updateControls();
+      try {
+        await action();
+        status.textContent = message;
+        await refresh();
+        return true;
+      } catch (cause) {
+        status.textContent = "Проверьте состояние данных перед повтором.";
+        showError(cause, true);
+        return false;
+      } finally {
+        busy = false;
+        updateControls();
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      const saved = await mutate(
+        () => tasks.set(crypto.randomUUID(), { text, done: false }),
+        "Задача сохранена.",
+      );
+      if (saved) input.value = "";
+    });
+
+    samples.addEventListener("click", () => {
+      void mutate(
+        () =>
+          tasks.writeBatch([
+            { type: "set", key: crypto.randomUUID(), value: { text: "Изучить Hoke", done: false } },
+            {
+              type: "set",
+              key: crypto.randomUUID(),
+              value: { text: "Собрать приложение", done: false },
+            },
+          ]),
+        "Обе задачи сохранены одной атомарной группой.",
+      );
+    });
+
+    window.addEventListener("pagehide", () => {
+      leaving = true;
+      ++refreshGeneration;
+      unsubscribe?.();
+      void database?.close().catch(() => {});
+    });
+
+    try {
+      database = await openDatabase("hoke-tasks-demo");
+      if (leaving) {
+        await database.close();
+      } else {
+        tasks = database.collection("tasks", { validate: isTask });
+        unsubscribe = tasks.subscribeRange({}, () => {
+          void refresh((cause) => showError(cause));
+        });
+        await refresh();
+        status.textContent = "База открыта. Можно добавлять задачи.";
+        busy = false;
+        updateControls();
+      }
+    } catch (cause) {
+      showError(cause);
+      status.textContent = "Не удалось открыть список. Перезагрузите страницу, чтобы повторить.";
+      unsubscribe?.();
+      void database?.close().catch(() => {});
+    }
+    </script>
+  </body>
+</html>
