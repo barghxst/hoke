@@ -235,3 +235,11 @@ Actual-WASM дополнительно проверяет output больше32M
 Проверяются WAL/SST precedence, tombstones/reinsert, byte bounds/FF prefix/reverse/live-row limit, selected CRC/I/O failures без устаревшего fallback, zero/точный byte budget, закрытие view/WAL, immutable source bytes и cleanup при missing/corrupt/locked sources. Actual-WASM проверяет полный packet32MiB отдельно от payload budget; реальный Worker проверяет first-init concurrency с одной загрузкой WASM и сохранением Rust allocations.
 
 View использует переданный живой WAL и не сохраняет snapshot. Он пока внутренний, в openDB UI не подключён; publication/root selection этим набором не проверяются. Контракт — [ADR0017](adr/0017-layered-reads.md).
+
+## 21. Container journal v1 (C6a)
+
+После реализации и интеграции прошли `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` и `cargo +1.89.0 test --workspace --locked`:252 JS,235 Rust,52 actual-WASM,11 Python,74 Chrome cases;235 Rust также на MSRV. Новые journal проверки:10 codec,13 core integration,11 actual-WASM и5 actual OPFS.
+
+Проверяются golden bytes, CRC-repaired invalid semantics, строгие refs/sequence/generation, все partial record tails, оба commit barriers и ошибки write/flush/sync/truncate, unknown final-sync outcome, отсутствие fallback/repair при полной corruption, pending без auto publication, dropped/interior/future/forged refs, caps до I/O и poisoning после CRC reread. Recovery читает payload порциями64KiB, metadata ограничены active/pending sets.
+
+OPFS Worker проверяет explicit roots/reopen, staged opaque segments, incomplete EOF truncate, неизменность файла после full corruption, ownership, validation/options copy до создания и полный root после потери финального flush acknowledgement. Это file publication tests, а не KV batch API, process kill или power-loss proof. Формат/порядок commit — [ADR0018](adr/0018-container-journal-v1.md).

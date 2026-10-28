@@ -187,3 +187,11 @@ Listeners снимаются также при error ACK, timeout, transport/pro
 Внутренний SstReadView держит индексы и handles нескольких SST, а на каждый get/scan получает живой WasmWal. Новые WAL values и tombstones перекрывают SST; более новая SST перекрывает старую. Scan возвращает только живые уникальные строки с прежними range/prefix/reverse/limit правилами. Закрытие view не закрывает WAL.
 
 Это общий путь чтения для будущего контейнерного backend, пока без переключения openDB. Он использует те же Rust правила, что native point get; и общий строгий decoder с Worker client. First-init WASM сериализован между внутренними файловыми модулями. Контракт — [ADR0017](adr/0017-layered-reads.md).
+
+## Контейнерный журнал (C6a)
+
+Реализован первый журнал нового container v1: immutable WAL/SST segments и append-only roots с CRC. Commit проверяет refs, синхронизирует данные, дописывает root, снова синхронизирует файл и только затем подтверждает публикацию. Partial EOF tail отбрасывается при reopen; full-record corruption, неизвестная версия и неверный root возвращают ошибку без fallback. Ошибка I/O или повторное обнаружение повреждения известного segment блокируют операции до reopen.
+
+Внутренний openContainerJournal(directory,name,{create}) открывает явный `.hkc` файл через exclusive sync handle. Создание требует create:true; старые `.wal` не импортируются. append лишь подготавливает segment; commit передаёт отдельные списки refs SST и WAL. payload пока opaque: этот слой не проверяет его как KV/WAL/SST и не является пользовательской транзакцией базы. Close не выполняет automatic commit. Имя контейнера не переключает существующий openDB — тот пока WAL-only.
+
+Лимиты:256MiB на segment,4096 active refs и4096 pending segments, offsets до2^53−1. Recovery проверяет payload CRC порциями64KiB; read_segment материализует весь выбранный payload. File растёт append-only; reclamation, power-loss safety и устойчивость первоначального имени этим срезом не доказываются. Формат и порядок восстановления — [ADR0018](adr/0018-container-journal-v1.md).

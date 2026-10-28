@@ -8,6 +8,8 @@
 
 - Добавлен внутренний live read view поверх WAL и SST: единые Rust правила версий, bounded scan, tombstone masking и общее WASM initialization.
 
+- Реализован новый append-only container journal v1: CRC framing/root refs, two-barrier commit, strict recovery, poisoned writer и внутренний OPFS `.hkc` adapter. Старые WAL/SST форматы и openDB mode сохранены.
+
 ### JavaScript package
 
 - Synchronous KV with memory and explicit localStorage adapters.

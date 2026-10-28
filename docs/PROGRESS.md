@@ -1,6 +1,6 @@
 # Ход работ
 
-Дата: 27 октября 2026.
+Дата: 28 октября 2026.
 
 ## Этап A / кандидат v0.1
 
@@ -21,15 +21,15 @@
 
 ## Последняя общая проверка
 
-C5c: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции общего пути чтения и исправления concurrent WASM initialization:
+C6a: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции container journal, OPFS adapter и terminal CRC reread policy:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
 - 252 JS tests в10 файлах, включая13 registry и121 DB client/collection cases;
-- 41 actual-WASM tests,212 Rust tests,11 Python benchmark tests;
+- 52 actual-WASM tests,235 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 69 настоящих Chrome155/Linux browser tests:56 OPFS/WASM/SST/read-view +4 OPFS demo +9 KV demo.
+- 74 настоящих Chrome155/Linux browser tests:61 OPFS/WASM/SST/read-view/container +4 OPFS demo +9 KV demo.
 
-SST v1/WAL v1 и Worker protocol2 не менялись; Общий Rust/WASM/OPFS read path добавлен в C5c. MSRV1.89.0 с196 Rust tests ранее проверен в C2; повторный MSRV прогон для C5a–C5c не выполнялся. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
+SST v1/WAL v1 и Worker protocol2 не менялись; добавлен отдельный container v1 с новым magic/root journal по выбранному пользователем направлению. Все235 Rust tests также прошли на MSRV1.89.0. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
 Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
 
@@ -297,3 +297,14 @@ C3 не завершает C: browser SST publication/compaction, atomic batch �
 27 октября пользователь явно выбрал один OPFS-контейнер с журналом commit (вариант B ADR0014). Новый долговременный container format разрешён; повторное согласование направления не нужно. Следующий рабочий срез: зафиксировать точные header/record/root bytes, caps и recovery, затем реализовать append-only journal поверх Storage. Code first, затем fault/integration проверки целого среза.
 
 Это выбор будущего backend, не заявление о готовой реализации: openDB сейчас WAL-only. SST/WAL payload codecs переиспользуются; root/container bytes будут новыми. Первоначальное создание имени, eviction/power loss и reclaim остаются явно ограниченными. Старый OPFS WAL не переписывается и не удаляется: перенос будет явным в новый namespace/имя с сохранением source. Destructive GC и автоматическая миграция не включаются.
+
+## C6a: container journal v1 / 28 октября
+
+- [x] ADR0018 фиксирует новый header/record/root/ref формат с CRC32, checked lengths/offsets, sequence/generation и zero reserved bytes. File magic HOKECNT, payload WAL/SST пока opaque. Старые codecs и существующие базы не менялись.
+- [x] Journal<S> пишет immutable segments и roots. Commit сначала sync данных, затем append root и sync; root публикуется в памяти только после успеха. Pure validation оставляет writer usable, I/O и известное повреждение при reread требуют reopen.
+- [x] Streaming recovery проверяет каждый полный record, реальные boundaries и refs только из предыдущего root/new pending. Исключённый ref не возвращается; metadata ограничены4096 active+4096 pending. Full corruption/future version не вызывают fallback или переписывание; только incomplete EOF tail truncate+sync.
+- [x] WasmJournal и внутренний OPFS openContainerJournal с явным .hkc/create, exclusive handle, no auto commit on close и cleanup при failed open. Root/ref transfer использует тот же codec; offsets/counters не теряют точность в JS.
+- [x] 10 codec +13 core Journal +11 actual-WASM +5 real OPFS cases. После реализации и интеграции полный check:252 JS +235 Rust +52 WASM +11 Python +74 Chrome; MSRV235 Rust также прошёл.
+- [x] При интеграции уточнён terminal CRC reread contract: старый WASM сценарий пытался commit после внешнего восстановления байта в том же poisoned object. Обновлён на явный reopen и проверку отсутствия записи до него; повторный общий прогон прошёл.
+
+Journal — настоящий publication primitive, ещё не контейнерная KV Database. Он не декодирует segment payload как WAL/SST, не собирает root из put/delete и не подключён к openDB. Следующий срез — KV coordinator поверх journal и ранее реализованного SST/read path. Read_segment копирует выбранный payload до256MiB, recovery читает CRC порциями64KiB. Append-only file growth, первоначальное имя, eviction и power loss остаются явно ограниченными; reclamation/automatic migration не включены.
