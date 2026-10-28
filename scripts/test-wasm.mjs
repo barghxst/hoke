@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import init, {
+  WasmContainerDb,
   WasmJournal,
   WasmReadView,
   WasmSst,
@@ -1344,4 +1345,262 @@ test("actual WASM journal close is idempotent without commit/sync or JS handle c
   ])
     assert.throws(action, /closed/);
   journal.free();
+});
+
+function batchPacket(operations) {
+  const packet = new Uint8Array(
+    4 + operations.reduce((n, [, key, value = bytes()]) => n + 9 + key.length + value.length, 0),
+  );
+  const view = new DataView(packet.buffer);
+  view.setUint32(0, operations.length, true);
+  let offset = 4;
+  for (const [tag, key, value = bytes()] of operations) {
+    packet[offset] = tag;
+    view.setUint32(offset + 1, key.length, true);
+    view.setUint32(offset + 5, value.length, true);
+    offset += 9;
+    packet.set(key, offset);
+    offset += key.length;
+    packet.set(value, offset);
+    offset += value.length;
+  }
+  return packet;
+}
+
+function containerStats(db) {
+  const packet = db.stats();
+  assert.equal(packet.length, 40);
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  return Array.from({ length: 5 }, (_, n) => view.getBigUint64(n * 8, true));
+}
+
+test("actual WASM container publishes binary KV/batches and reopens through flush/compact", () => {
+  const adapter = new ByteAdapter();
+  let db = new WasmContainerDb(adapter);
+  assert.deepEqual(containerStats(db), [1n, 0n, 0n, 0n, 0n]);
+  db.put(key, initial);
+  db.put(bytes(), bytes());
+  db.flush();
+  assert.deepEqual(containerStats(db).slice(1), [1n, 0n, 0n, 0n]);
+  db.write_batch(
+    batchPacket([
+      [1, key, changed],
+      [2, key],
+      [1, key, bytes(7)],
+      [1, bytes(1), bytes(5)],
+    ]),
+  );
+  assert.deepEqual(db.get(key), bytes(7));
+  db.delete(bytes());
+  assert.equal(db.get(bytes()), undefined);
+  close(db);
+  db = new WasmContainerDb(adapter);
+  assert.deepEqual(scan(db), [
+    [key, bytes(7)],
+    [bytes(1), bytes(5)],
+  ]);
+  assert.deepEqual(scan(db, undefined, undefined, undefined, 4, 1), [[bytes(1), bytes(5)]]);
+  db.compact();
+  assert.deepEqual(containerStats(db).slice(1), [1n, 0n, 0n, 0n]);
+  close(db);
+  db = new WasmContainerDb(adapter);
+  assert.deepEqual(db.get(key), bytes(7));
+  assert.equal(db.get(bytes()), undefined);
+  db.delete(key);
+  db.delete(bytes(1));
+  db.compact();
+  assert.deepEqual(containerStats(db).slice(1), [0n, 0n, 0n, 0n]);
+  close(db);
+  db = new WasmContainerDb(adapter);
+  assert.deepEqual(scan(db), []);
+  close(db);
+});
+
+test("actual WASM container rejects malformed batch packets before persistent I/O", () => {
+  const adapter = new ByteAdapter();
+  const db = new WasmContainerDb(adapter);
+  const valid = batchPacket([
+    [1, key, initial],
+    [2, key],
+  ]);
+  const tag = valid.slice();
+  tag[4] = 3;
+  const deleteValue = batchPacket([[2, key, bytes(7)]]);
+  const count = new Uint8Array(4);
+  new DataView(count.buffer).setUint32(0, 1025, true);
+  const largeKey = batchPacket([[1, new Uint8Array(65537)]]);
+  const largeValue = batchPacket([[1, key, new Uint8Array(16 * 1024 * 1024 + 1)]]);
+  const overBudget = new Uint8Array(4 + 3 * 9);
+  const overView = new DataView(overBudget.buffer);
+  overView.setUint32(0, 1, true);
+  overBudget[4] = 1;
+  overView.setUint32(9, 16 * 1024 * 1024 + 1, true);
+  const before = adapter.bytes.slice();
+  const io = [adapter.writes, adapter.syncs, adapter.truncations];
+  for (const packet of [
+    bytes(),
+    bytes(0),
+    tag,
+    deleteValue,
+    count,
+    largeKey,
+    largeValue,
+    overBudget,
+    ...Array.from({ length: valid.length - 4 }, (_, n) => valid.subarray(0, n + 4)),
+    Uint8Array.from([...valid, 0]),
+  ]) {
+    assert.throws(() => db.write_batch(packet), /batch|operation|truncated|trailing/);
+    assert.deepEqual(adapter.bytes, before);
+    assert.deepEqual([adapter.writes, adapter.syncs, adapter.truncations], io);
+    assert.equal(db.is_poisoned(), false);
+  }
+  db.write_batch(batchPacket([]));
+  assert.deepEqual(adapter.bytes, before);
+  db.put(key, initial);
+  assert.deepEqual(db.get(key), initial);
+  close(db);
+});
+
+test("actual WASM container validates point/scan limits without poisoning", () => {
+  const adapter = new ByteAdapter();
+  const db = new WasmContainerDb(adapter);
+  for (const action of [
+    () => db.put(new Uint8Array(65537), bytes()),
+    () => db.delete(new Uint8Array(65537)),
+    () => db.get(new Uint8Array(65537)),
+    () => db.put(key, new Uint8Array(16 * 1024 * 1024 + 1)),
+    () => db.scan(undefined, undefined, undefined, 8, 100),
+    () => db.scan(undefined, undefined, undefined, 0, 1001),
+    () => db.scan(undefined, undefined, new Uint8Array(65537), 0, 1),
+  ]) {
+    const before = adapter.bytes.slice();
+    assert.throws(action, /limit|exceeds|flags|64 KiB|16 MiB/);
+    assert.deepEqual(adapter.bytes, before);
+    assert.equal(db.is_poisoned(), false);
+  }
+  close(db);
+});
+
+test("actual WASM container failed final sync poisons reads and may recover committed mutation", () => {
+  const adapter = new ByteAdapter();
+  let db = new WasmContainerDb(adapter);
+  db.put(key, initial);
+  const originalFlush = adapter.flush.bind(adapter);
+  let syncs = 0;
+  adapter.flush = () => {
+    originalFlush();
+    if (++syncs === 2) throw new Error("injected final commit sync failure");
+  };
+  assert.throws(() => db.put(key, changed), /injected final commit sync failure/);
+  assert.equal(db.is_poisoned(), true);
+  assert.equal(containerStats(db).length, 5);
+  for (const action of [
+    () => db.get(key),
+    () => scan(db),
+    () => db.put(key, initial),
+    () => db.flush(),
+    () => db.compact(),
+  ])
+    assert.throws(action, /reopen|poison|outcome/);
+  close(db);
+  delete adapter.flush;
+  db = new WasmContainerDb(adapter);
+  assert.deepEqual(db.get(key), changed);
+  close(db);
+});
+
+test("actual WASM container active winning SST corruption never falls back to stale data", () => {
+  const adapter = new ByteAdapter();
+  const db = new WasmContainerDb(adapter);
+  db.put(key, initial);
+  db.flush();
+  db.put(key, changed);
+  db.flush();
+  const journal = new WasmJournal(adapter);
+  const root = journal.root();
+  // Root header is 24 bytes followed by oldest-to-newest SST descriptors.
+  const newest = root.subarray(48, 72);
+  const payload = refOffset(newest) + 32;
+  close(journal);
+  adapter.bytes[payload + 32 + 28 + key.length] ^= 1;
+  assert.throws(() => db.get(key), /checksum|CRC|crc/);
+  assert.equal(db.is_poisoned(), true);
+  assert.throws(() => scan(db), /reopen|poison|outcome/);
+  close(db);
+  const before = adapter.bytes.slice();
+  assert.throws(() => new WasmContainerDb(adapter), /checksum|CRC|crc/);
+  assert.deepEqual(adapter.bytes, before);
+});
+
+test("actual WASM container close is idempotent without commit/sync or handle close", () => {
+  const adapter = new ByteAdapter();
+  const db = new WasmContainerDb(adapter);
+  db.put(key, initial);
+  const before = adapter.bytes.slice();
+  adapter.flush = () => assert.fail("container close must not sync");
+  db.close();
+  db.close();
+  assert.deepEqual(adapter.bytes, before);
+  for (const action of [
+    () => db.get(key),
+    () => db.put(key, initial),
+    () => db.delete(key),
+    () => db.write_batch(batchPacket([])),
+    () => scan(db),
+    () => db.flush(),
+    () => db.compact(),
+    () => db.stats(),
+    () => db.is_poisoned(),
+  ])
+    assert.throws(action, /closed/);
+  db.free();
+});
+
+test("actual WASM container enforces aggregate batch and framed scan budgets", () => {
+  const adapter = new FullByteAdapter();
+  const db = new WasmContainerDb(adapter);
+  const maximum = 16 * 1024 * 1024;
+  const value = new Uint8Array(maximum);
+  const excessive = batchPacket([
+    [1, bytes(0), value],
+    [1, bytes(1), value],
+  ]);
+  const before = adapter.bytes.slice();
+  assert.throws(() => db.write_batch(excessive), /32 MiB/);
+  assert.deepEqual(adapter.bytes, before);
+  assert.equal(db.is_poisoned(), false);
+  db.write_batch(
+    batchPacket([
+      [1, bytes(0), value],
+      [1, bytes(1), value.subarray(0, maximum - 22)],
+    ]),
+  );
+  assert.equal(db.scan(undefined, undefined, undefined, 0, 100).length, 32 * 1024 * 1024);
+  db.flush();
+  db.put(bytes(1), value.subarray(0, maximum - 21));
+  assert.throws(() => scan(db), /packet.*budget/);
+  assert.equal(db.is_poisoned(), false);
+  assert.equal(scan(db, undefined, undefined, undefined, 0, 1).length, 1);
+  close(db);
+});
+
+test("actual WASM container rejects immutable inner WAL corruption before outer tail repair", () => {
+  for (const invalid of [
+    savedWal().subarray(0, savedWal().length - 1),
+    Uint8Array.from([...savedWal(), 0]),
+  ]) {
+    const adapter = new ByteAdapter();
+    const journal = new WasmJournal(adapter);
+    const wal = journal.append(1, invalid);
+    journal.commit(bytes(), wal);
+    close(journal);
+    const size = adapter.bytes.length;
+    adapter.resize(size + 3);
+    adapter.bytes.set(bytes(1, 2, 3), size);
+    const before = adapter.bytes.slice();
+    const truncations = adapter.truncations;
+    assert.throws(() => new WasmContainerDb(adapter), /WAL|wal|frame|truncated|partial|trailing/);
+    assert.deepEqual(adapter.bytes, before);
+    assert.equal(adapter.truncations, truncations);
+  }
 });
