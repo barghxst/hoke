@@ -2,7 +2,7 @@
 
 Хранилище данных для веба и React Native: простой KV для настроек и будущая встроенная база на общем Rust-ядре.
 
-Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db уже работает через Rust/WASM/Worker/OPFS в режиме WAL-only (get/put/delete/scan/close, byte collections, подписки и отмена); браузерные SST/batch, React Native и devtools ещё не реализованы. Пакет не опубликован.
+Сейчас работает прототип этапа A: KV в памяти/localStorage, реактивные сторы с версиями и миграциями, React-хуки. В Rust работают WAL Engine и Database с SSTable, manifest, настраиваемым flush, scan, compaction и атомарным batch; Экспериментальный hoke/db работает через Rust/WASM/Worker/OPFS: WAL и явный container-v1 с SST, atomic batch и compaction, byte collections, подписками и отменой. React Native и devtools ещё не реализованы. Пакет не опубликован.
 
 [Подробный план](docs/PLAN.md) · [Ход работ](docs/PROGRESS.md) · [Решения по API](docs/adr/0001-store-and-react-contract.md) · [Changelog](CHANGELOG.md)
 
@@ -172,7 +172,7 @@ StoreError.code: invalid-definition, invalid-defaults, invalid-envelope, invalid
 - Тесты KV/storage/store: повреждение данных, квота/доступ, стабильность snapshots, миграции и провал commit.
 - React DOM tests в jsdom: selectors, смена store, StrictMode, unsubscribe, SSR и hydration.
 - Tarball: exports, declarations, установленные JS-модули без React и browser globals.
-- Полная проверка в настоящем браузере пока не выполнена: локальный инструмент браузера не смог запустить runtime. jsdom не заменяет проверку реального браузера.
+- Настоящие Chrome/OPFS сценарии выполняются локально; актуальные результаты — в docs/PROGRESS.md. Остальные браузеры/ОС и физическая потеря питания не проверены. jsdom остаётся отдельной проверкой.
 - Уведомления между вкладками и разными экземплярами KV пока отсутствуют. get обнаружит изменённую raw запись, но внешнее изменение само не разбудит подписчика.
 - Нативные платформы, настоящий browser matrix и будущие гарантии DB пока не заявляются.
 
@@ -180,7 +180,7 @@ StoreError.code: invalid-definition, invalid-defaults, invalid-envelope, invalid
 
 ## Rust: первый движок с WAL
 
-Это отдельный crate `hoke-core`, ещё не подключённый к веб-демо. Он записывает операции в бинарный журнал, синхронизирует файл перед подтверждением и при открытии восстанавливает актуальные значения в память.
+Ниже native файловый CLI crate `hoke-core`. Браузерное демо использует WASM binding этого ядра и отдельное OPFS-хранилище. WAL Engine записывает операции в бинарный журнал, синхронизирует файл перед подтверждением и при открытии восстанавливает актуальные значения в память.
 
 ```sh
 cargo run -p hoke-core --bin hoke -- /tmp/hoke-example.wal put theme dark
@@ -265,11 +265,11 @@ max_wal_bytes/--wal-limit проверяет длину журнала с нов
 
 `pnpm check` проверяет JS, установленный tarball, Rust и benchmark harness. Для настоящего браузера установите `pnpm exec playwright install chromium` и выполните `pnpm check:all`. Если Chrome уже установлен: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all`. Локально проверен Chrome 155.0.8059.84/Linux; это отдельный прогон от jsdom. Инструкции и ограничения — [TESTING.md](docs/TESTING.md).
 
-## Rust/WASM в OPFS — экспериментальный C1
+## Rust/WASM в OPFS
 
-`hoke/db` теперь предоставляет async openDB/get/put/delete/close через Dedicated Worker и существующий Rust WAL v1. Демо после `pnpm demo`: http://127.0.0.1:8000/examples/opfs/. Для сборки нужны WASM target и wasm-bindgen CLI0.2.129; команды, API и границы гарантий — [OPFS.md](docs/OPFS.md).
+`hoke/db` предоставляет async openDB/get/put/delete/scan/close через Dedicated Worker. По умолчанию открывается прежний WAL; `{ mode: "container-v1" }` включает SST, atomic writeBatch, flush, compact и stats. Демо после `pnpm demo`: http://127.0.0.1:8000/examples/opfs/. Для сборки нужны WASM target и wasm-bindgen CLI0.2.129; команды, API и границы гарантий — [OPFS.md](docs/OPFS.md).
 
-Это WAL-only браузерный срез с одним владельцем файла. Browser scan/collection добавлены в C2. Native SST/compaction/atomic batch не включены в него автоматически; полный этап C ещё предстоит завершить.
+Режимы используют отдельные файлы; одинаковое имя не переносит данные между WAL и контейнером. В контейнерном режиме можно сохранить несколько put/delete одним writeBatch, перенести delta в SST через flush и объединить активные данные через compact. Файл пока растёт append-only: compaction не возвращает место. Один файл имеет одного владельца; совместный доступ вкладок и DB migrations остаются впереди.
 
 ## Подписки DB — C3
 

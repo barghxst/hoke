@@ -151,3 +151,69 @@ test("OPFS demo cancels an opening worker and can open again without an automati
     release();
   }
 });
+
+test("OPFS demo container batches, flushes and compacts with persistent data and isolated WAL", async ({
+  page,
+}) => {
+  const errors: Error[] = [];
+  page.on("pageerror", (error) => errors.push(error));
+  await page.goto("/examples/opfs/");
+  await expect(page.locator("#batch")).toBeDisabled();
+  await page.locator("#mode").selectOption("container-v1");
+  await page.locator("#open").click();
+  await expect(page.locator("#status")).toContainText("container-v1");
+  await expect(page.locator("#mode")).toBeDisabled();
+  await page.locator("#prefix").fill("user:");
+  await page.locator("#watch").click();
+  await page.locator("#batch").click();
+  await expect(page.locator("#result")).toContainText("одной атомарной группой");
+  await expect(page.locator("#notifications")).toHaveText("1");
+  await page.locator("#scan").click();
+  const rows = JSON.stringify(
+    [
+      { key: "user:1", value: "Alice" },
+      { key: "user:2", value: "Bob" },
+    ],
+    null,
+    2,
+  );
+  await expect(page.locator("#entries")).toHaveText(rows);
+  await page.locator("#stats").click();
+  await expect(page.locator("#stats")).toBeEnabled();
+  const before = JSON.parse((await page.locator("#statistics").textContent()) ?? "{}");
+  expect(BigInt(before.generation)).toBeGreaterThan(0n);
+  expect(before.memtableEntries).toBe(2);
+  expect(before.walSegments).toBe(1);
+  await page.locator("#flush").click();
+  await expect(page.locator("#result")).toHaveText("Изменения перенесены в SST.");
+  await page.locator("#stats").click();
+  await expect(page.locator("#stats")).toBeEnabled();
+  const flushed = JSON.parse((await page.locator("#statistics").textContent()) ?? "{}");
+  expect(flushed.tableCount).toBe(1);
+  expect(flushed.memtableEntries).toBe(0);
+  expect(flushed.walSegments).toBe(0);
+  await page.locator("#compact").click();
+  await expect(page.locator("#result")).toContainText("Размер файла не уменьшен");
+  await expect(page.locator("#notifications")).toHaveText("1");
+  await page.reload();
+  await page.locator("#mode").selectOption("container-v1");
+  await page.locator("#open").click();
+  await expect(page.locator("#scan")).toBeEnabled();
+  await page.locator("#prefix").fill("user:");
+  await page.locator("#scan").click();
+  await expect(page.locator("#entries")).toHaveText(rows);
+  await page.locator("#close").click();
+  await expect(page.locator("#watch-status")).toHaveText("Подписка выключена.");
+  await expect(page.locator("#mode")).toBeEnabled();
+  await page.locator("#mode").selectOption("wal-v1");
+  await page.locator("#open").click();
+  await expect(page.locator("#scan")).toBeEnabled();
+  await expect(page.locator("#batch")).toBeDisabled();
+  await expect(page.locator("#flush")).toBeDisabled();
+  await expect(page.locator("#compact")).toBeDisabled();
+  await expect(page.locator("#stats")).toBeDisabled();
+  await page.locator("#scan").click();
+  await expect(page.locator("#entries")).toHaveText("[]");
+  await expect(page.locator("#error")).toBeEmpty();
+  expect(errors).toEqual([]);
+});

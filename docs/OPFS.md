@@ -1,6 +1,6 @@
-# Экспериментальный Rust/WASM WAL в браузере
+# Экспериментальная Rust/WASM база в браузере
 
-C1–C4 переносят существующий WAL-only Rust Engine в Dedicated Worker с настоящим OPFS. Это отдельный backend hoke/db; KV/localStorage и React entry points не загружают WASM при импорте. Native Database с SST/manifest/compaction остаётся отдельным Rust API.
+hoke/db выполняет Rust в Dedicated Worker с настоящим OPFS. Default wal-v1 сохраняет прежний WAL-only Engine; явный container-v1 предоставляет SST, atomic batch и compaction в одном файле. KV/localStorage и React entry points не загружают WASM при импорте. Native multi-file Database с manifest остаётся отдельным Rust API.
 
 ## Подготовка
 
@@ -14,7 +14,7 @@ pnpm build
 pnpm demo
 ```
 
-Откройте http://127.0.0.1:8000/examples/opfs/. Нажмите «Открыть базу», запишите значение, закройте и откройте базу, прочитайте. Затем перезагрузите страницу, снова откройте базу и прочитайте. Удаление ключа также сохраняется. Демо использует имя browser-demo, key theme и не очищает весь OPFS.
+Откройте http://127.0.0.1:8000/examples/opfs/. Нажмите «Открыть базу», запишите значение, закройте и откройте базу, прочитайте. Затем перезагрузите страницу, снова откройте базу и прочитайте. Удаление ключа также сохраняется. Демо использует имя browser-demo, key theme и не очищает весь OPFS. По умолчанию выбран WAL; для batch/SST выберите «Контейнер v1» до открытия. При reload снова выберите тот же режим: selector не сохраняется. Закройте базу перед сменой режима; данные между режимами не переносятся.
 
 Если порт8000 занят, после сборки запустите `python3 -m http.server 8001 --bind 127.0.0.1` и откройте тот же путь на порту8001. Другой порт означает другой origin и отдельное хранилище.
 
@@ -36,15 +36,15 @@ try {
 }
 ```
 
-mode равен wal-v1. Методы чтения/записи асинхронны, близкие запросы последовательно выполняются Worker. close идемпотентен. Имя: 1–64 ASCII символа, первый буква/цифра, далее буквы/цифры/_/-. Оно отображается в OPFS/hoke-wal-v1/<name>.wal. Ключи до64KiB, значения до16MiB; пустые и бинарные bytes разрешены. Входные и возвращаемые буферы копируются, caller buffers не detached.
+db.mode равен выбранному режиму: wal-v1 по умолчанию или container-v1 при явной опции mode. Методы чтения/записи асинхронны, близкие запросы последовательно выполняются Worker. close идемпотентен. Имя: 1–64 ASCII символа, первый буква/цифра, далее буквы/цифры/_/-. В WAL-режиме оно отображается в OPFS/hoke-wal-v1/<name>.wal. Контейнер использует OPFS/hoke-container-v1/<name>.hkc, поэтому то же имя не открывает и не переносит старый WAL. Ключи до64KiB, значения до16MiB; пустые и бинарные bytes разрешены. Входные и возвращаемые буферы копируются, caller buffers не detached.
 
-Валидное имя с другим регистром не нормализуется. Origin и имя определяют хранилище; native multi-file каталоги не подключаются автоматически. Второй владелец того же файла получает LOCKED; другой name независим. Никакого readwrite-unsafe и fallback в память/localStorage.
+Валидное имя с другим регистром не нормализуется. Origin, mode и имя определяют хранилище; native multi-file каталоги не подключаются автоматически. Второй владелец того же файла получает LOCKED; другой name независим. Никакого readwrite-unsafe и fallback в память/localStorage.
 
 ## Подтверждение и ошибки
 
-Put/delete вызывают Rust Engine с существующими WAL v1/CRC32/recovery. ACK возвращается после успешного OPFS handle.flush. Неполный финальный frame обрезается по native recovery; полный corrupt frame и future version отклоняются без переписывания. Номер версии WAL не является номером JS store schema.
+В wal-v1 put/delete вызывают Rust Engine с существующими WAL v1/CRC32/recovery. ACK возвращается после успешного OPFS handle.flush. Неполный финальный frame обрезается по native recovery; полный corrupt frame и future version отклоняются без переписывания. Номер версии WAL не является номером JS store schema.
 
-DBError содержит code/message. INVALID_ARGUMENT — имя/bytes/options; UNSUPPORTED — нет Worker/secure context/sync OPFS; LOCKED — второй владелец; STORAGE — открытие OPFS/доступ/квота; ENGINE — Rust/WASM/операция adapter; CLOSED — закрытый экземпляр; ABORTED — отмена через signal; TIMEOUT/WORKER/PROTOCOL — транспорт. Ошибка I/O движка блокирует последующие mutations до close/reopen, не выдавая ложный ACK; чтение ранее опубликованного in-memory state остаётся возможно.
+DBError содержит code/message. INVALID_ARGUMENT — имя/bytes/options; UNSUPPORTED — нет Worker/secure context/sync OPFS; LOCKED — второй владелец; STORAGE — открытие OPFS/доступ/квота; ENGINE — Rust/WASM/операция adapter; CLOSED — закрытый экземпляр; ABORTED — отмена через signal; TIMEOUT/WORKER/PROTOCOL — транспорт. В WAL-режиме ошибка I/O движка блокирует mutations до close/reopen; чтение ранее опубликованного in-memory state остаётся возможно. Контейнер после неизвестного исхода persistent publication или source corruption отклоняет также get/scan до reopen; stats остаётся диагностикой.
 
 Таймаут (1..600000ms, default30000), worker crash и повреждённый ответ прекращают Worker и отклоняют все pending запросы. Нельзя отменить отдельный уже выполняемый синхронный вызов; прекращение Worker закрывает всю сессию. Запись могла уже пройти flush до потери ответа. Не повторяйте mutation автоматически: reopen и прочитайте состояние. При транспортном сбое до отправки ответа Worker также пытается освободить engine/handle; при невозможности сигнализации клиент завершит сессию по timeout.
 
@@ -58,15 +58,53 @@ HOKE_BROWSER_CHANNEL=chrome pnpm test:browser
 HOKE_BROWSER_CHANNEL=chrome pnpm check:all
 ```
 
-`test:wasm` ожидает результат `pnpm build:wasm` и выполняет 20 тестов настоящего WASM с управляемым byte adapter, short I/O и ошибками. Это не замена OPFS-тестам. Browser suite включает низкоуровневые OPFS/WASM сценарии и проверки запускаемых OPFS/KV демо. Актуальные количества и результаты — в PROGRESS.md. Локально проверен Chrome155/Linux. Установка bundled Chromium и CI описаны в TESTING.md; внешний CI пока не запускался.
+`test:wasm` ожидает результат `pnpm build:wasm` и выполняет тесты настоящего WASM с управляемым byte adapter, short I/O и ошибками. Это не замена OPFS-тестам. Browser suite включает низкоуровневые OPFS/WASM сценарии и проверки запускаемых OPFS/KV демо. Актуальные количества и результаты — в PROGRESS.md. Локально проверен Chrome155/Linux. Установка bundled Chromium и CI описаны в TESTING.md; внешний CI пока не запускался.
 
 Проверяются binary/empty/copy, delete, close/reopen/reload, exclusive ownership, namespace isolation, Worker termination после ACK, corrupt/future version с корректной CRC без переписывания, incomplete tail, ошибки read/write/flush и невозможность отправить ответ. Проверка client protocol/timeouts выполняется отдельными unit tests с fake Worker. Worker termination не равен browser-process crash или отключению питания.
 
 ## Текущие границы и следующий шаг
 
-Весь WAL проигрывается в map при open, общий размер базы не ограничивается API. SST, compaction/GC, atomic batch и DB migrations в браузерном API пока отсутствуют. Scan и байтовые коллекции добавлены в C2, см. ниже. Не используйте этот срез для неограниченного журнала. Полный C ещё не завершён: перенос multi-file publication потребует отдельного ADR и fault tests. Multi-tab здесь означает явный отказ второму владельцу, не совместный доступ.
+WAL-режим проигрывает весь журнал в map при open, общий размер базы не ограничивается API. Container-v1 использует SST и ограниченный active WAL, но его файл пока растёт без physical reclamation. DB migrations, общий multi-tab доступ и React Native ещё не реализованы. Multi-tab здесь означает явный отказ второму владельцу, не совместный доступ. Ограничения контейнера и явный API — в следующем разделе.
 
 Архитектура и альтернативы — [ADR0010](adr/0010-browser-wal-worker.md). OPFS требует Dedicated Worker и secure context; источники: [sync handles](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemFileHandle/createSyncAccessHandle), [flush](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemSyncAccessHandle/flush).
+
+## Container-v1: batch, SST и compaction
+
+```ts
+import { openDB } from "hoke/db";
+
+const bytes = (text: string) => new TextEncoder().encode(text);
+const db = await openDB("settings", { mode: "container-v1" });
+try {
+  await db.writeBatch([
+    { type: "put", key: bytes("theme"), value: bytes("dark") },
+    { type: "put", key: bytes("count"), value: bytes("7") },
+    { type: "delete", key: bytes("obsolete") },
+  ]);
+  await db.flush();
+  await db.compact();
+  const state = await db.stats();
+  console.log(state.generation.toString(), state.tableCount);
+} finally {
+  await db.close();
+}
+```
+
+Выбор mode обязателен только для контейнера; default остаётся wal-v1. Неизвестный mode отклоняется. Существующий `.wal` не меняется и не импортируется; одинаковое имя в другом режиме открывает отдельную базу. Автоматической миграции или объединения namespaces нет. get/put/delete/scan, коллекции, подписки и AbortSignal работают в обоих режимах.
+
+Новые методы BrowserDB: writeBatch(operations,options?), flush(options?), compact(options?), stats(options?). Options — DBOperationOptions с signal; после dispatch отмена завершает всю сессию с неизвестным исходом. В wal-v1 эти методы отклоняются с UNSUPPORTED. BrowserDB.writeBatch принимает физические ключи; collection.writeBatch принимает локальные ключи и добавляет namespace к каждой операции. Flush, compact и stats доступны на всей BrowserDB.
+
+Batch — до1024 операций и32MiB суммарного key/value payload. Каждая операция задаёт type:"put" с key/value либо type:"delete" с key. Ключи до64KiB, значения до16MiB. Входные bytes копируются до отправки; операции одного ключа идут по входному порядку, последняя побеждает. Успешный непустой batch сохраняется одним root и восстанавливается целиком. Пустой batch не пишет root и не уведомляет. Это atomic write batch, без интерактивных транзакций или обещания ускорения.
+
+Mutation публикует immutable WAL segment, затем commit root. ACK приходит после двух OPFS flush barriers: сначала данные, затем root. Recovery читает последний корректно опубликованный root, проверяет active sources и не подмешивает orphan segments. Повреждённая полная запись не вызывает stale fallback. Потерянный ACK или failed sync не означает rollback; автоматически повторять batch нельзя.
+
+flush переносит dirty delta с tombstones в SST и исключает прежние WAL refs из active root. compact объединяет весь active state, удаляет скрытые старые версии и ненужные tombstones; результат — не более одной SST. Ни flush, ни compact не меняют логические значения и не вызывают подписчиков. Все прежние segment bytes остаются в append-only файле: **compaction не уменьшает занимаемое место**.
+
+stats возвращает `{generation:bigint,tableCount:number,walSegments:number,memtableEntries:number,memtableBytes:number}`. Generation — номер commit root, не schema version; сериализуйте bigint явно, например `.toString()`. Counts описывают active state, а memtableBytes — key/value payload и tombstones, не полный RSS или размер файла.
+
+Ограничения:64 active SST,64 active WAL segments и32MiB dirty payload. Перед превышением dirty/WAL limit выполняется preflush; при исчерпании SST cap требуется compact. Staged SST output ограничен256MiB; это память для подготовки результата плюс индексы, streaming compaction без такого buffer пока не заявлена. Capacity error не публикует неполный результат; preflush может уже сохранить прежние значения отдельным root, не подтверждая запрошенную mutation. Контейнер не гарантирует работу с неограниченными объёмами, отсутствие eviction или сохранность при физическом отключении питания.
+
+В демо выберите контейнер, откройте базу и нажмите «Сохранить обе записи». Prefix user: покажет Alice и Bob. «Показать состояние» до flush показывает dirty записи и WAL segment; после «Перенести изменения в SST» memtable/WAL пусты и tableCount равен1. «Объединить активные данные» сохраняет значения. После reload выберите контейнер снова и перечитайте список. Переключение на WAL покажет отдельные данные.
 
 ## C2: scan и байтовые коллекции
 
@@ -98,7 +136,7 @@ const selected = await users.scan({
 
 DBCollection предоставляет get/put/delete/scan и подписки с bytes и разделяет срок жизни/ошибки своей базы. Отдельного close нет. Имя коллекции — любые bytes, включая пустые; копируется при создании. Безопасный namespace:0x01 + u32BE длина prefix + prefix. Коллекции a/ab с ключами bc/c не сливаются. Максимум prefix65531bytes; namespace+local key должен помещаться в64KiB. Collection scan использует относительные bounds/prefix и не выходит за свою коллекцию. Root db.scan показывает физические ключи всех коллекций, существующие raw keys автоматически не переносятся.
 
-Worker protocol теперь v2: старые request/response отклоняются. WAL по-прежнему v1, ранее сохранённые данные открываются без миграции. Scan читает Rust map через общий native range-код без файловых операций; это согласованное состояние на момент выполнения запроса в очереди Worker, не snapshot на момент вызова из main thread.
+Worker protocol3 версионируется отдельно: старые несовместимые request/response отклоняются. WAL по-прежнему v1, ранее сохранённые данные открываются без миграции. В wal-v1 scan читает Rust map без файловых операций; в container-v1 объединяет WAL map и выбранные SST payload через общий range-код; это согласованное состояние на момент выполнения запроса в очереди Worker, не snapshot на момент вызова из main thread.
 
 В демо можно сохранить user:1=Alice и user:2=Bob, установить prefix user:, reverse и limit1, затем «Прочитать список». После reload данные сохраняются; после удаления user:2 выдаётся user:1. Архитектура, лимиты и key encoding — [ADR0011](adr/0011-browser-scans-collections.md).
 
@@ -131,7 +169,7 @@ try {
 
 subscribe принимает точный byte key; subscribeRange — {start,end,prefix} с теми же inclusive/exclusive правилами, что scan. Без фильтров `{}` наблюдает все ключи. limit/reverse не принимаются: это множество ключей, а не текущая страница scan. Входные bytes копируются. DBCollection поддерживает те же методы с относительными ключами/range, которые остаются внутри её namespace.
 
-Callback вызывается синхронно после проверенного successful ACK put/delete, до завершения Promise этой mutation. Начального callback нет; get/scan/replay не уведомляют. Повторная запись того же значения и удаление отсутствующего ключа тоже дают invalidation. Отдельный get/scan из callback увидит состояние на момент обработки нового запроса в Worker, а не снимок исходной записи.
+Callback вызывается синхронно после проверенного successful ACK put/delete/writeBatch, до завершения Promise этой mutation. Для batch каждая подходящая регистрация вызывается один раз, даже если совпало несколько ключей; ошибки callbacks после commit дают DBNotificationError с committed:true. Начального callback нет; get/scan/replay/flush/compact не уведомляют. Повторная запись того же значения и удаление отсутствующего ключа тоже дают invalidation. Отдельный get/scan из callback увидит состояние на момент обработки нового запроса в Worker, а не снимок исходной записи.
 
 Callbacks должны возвращать void синхронно. Если нужна async работа, запускайте её отдельно с собственным catch, не возвращая Promise из callback. Promise/thenable result считается ошибкой; native rejected Promise наблюдается без unhandled rejection, custom then method не вызывается. Все подходящие активные callbacks получают попытку вызова, а их ошибки собираются в DBNotificationError extends AggregateError: code SUBSCRIBER_FAILED, committed true. Это ошибка уведомления после сохранения; rollback и автоматического retry нет. База остаётся доступной.
 
@@ -158,7 +196,7 @@ try {
 // request.abort() из UI до settlement отменяет запрос по правилам ниже.
 ```
 
-Сигнатуры BrowserDB и DBCollection: get(key,options?), put(key,value,options?), delete(key,options?), scan(scanOptions?,operationOptions?). DBOperationOptions содержит signal; OpenDBOptions также принимает timeoutMs. close() не принимает signal и закрывает всю сессию.
+Сигнатуры BrowserDB и DBCollection: get(key,options?), put(key,value,options?), delete(key,options?), scan(scanOptions?,operationOptions?). DBOperationOptions содержит signal; OpenDBOptions также принимает timeoutMs и mode. Container-only writeBatch/flush/compact/stats принимают options с signal последним аргументом. close() не принимает signal и закрывает всю сессию.
 
 DBAbortSignal — публичный structural type с readonly aborted:boolean, addEventListener("abort",listener,options?) и removeEventListener("abort",listener). Native AbortController.signal подходит без преобразования; импорт hoke/db не требует глобального AbortSignal. Публичные declarations пригодны для потребителя без DOM types. Некорректные signals/getters/registration возвращают INVALID_ARGUMENT до dispatch.
 
@@ -174,25 +212,25 @@ Listeners снимаются также при error ACK, timeout, transport/pro
 
 В ядре и WASM реализованы чтение/построение существующих SST v1; внутренний файловый слой `packages/hoke/src/db/sst-files.ts` создаёт кандидатов и открывает их через OPFS sync handles. Он сохраняет tombstones, различает пустые значения и missing, поддерживает bounded scan и освобождает handles при close/ошибке. Файлы совместимы с native codec, новый durable format не введён.
 
-Это подготовка файловой части, а не переключение openDB на SST. WAL остаётся источником истины; flush/compaction/batch в браузерном API ещё не подключены. Публикация кандидатов и reclamation требуют отдельного решения. Контракт — [ADR0015](adr/0015-sst-wasm-files.md), варианты commit — [ADR0014](adr/0014-opfs-multifile-publication-proposal.md).
+Это подготовка файловой части; standalone SST candidates не становятся active state сами. Публичный container-v1 ниже использует SST segments внутри одного файла, а wal-v1 сохраняет прежний источник истины. Reclamation ещё не реализован. Контракт — [ADR0015](adr/0015-sst-wasm-files.md), варианты commit — [ADR0014](adr/0014-opfs-multifile-publication-proposal.md).
 
 ## Объединение SST-кандидатов (C5b)
 
 Внутренний mergeSstCandidates(directory,names) объединяет до64 SST в новый файл: имена передаются от старых данных к новым, последнее значение ключа побеждает, tombstones сохраняются. Файлы-источники остаются неизменными. Rust merge читает выбранные values по одной записи; итоговый файл может превышать32MiB и1000 записей, scan сохраняет свои прежние пределы.
 
-Это файловая часть compaction, пока без изменения active state openDB. Успех означает подготовленный file candidate, а не пользовательский commit или разрешение удалить источники. [ADR0016](adr/0016-sst-merge-candidates.md) описывает ordering, владение handles, ошибки и lazy CRC.
+Это standalone файловая часть compaction, независимая от active state публичного контейнера. Успех означает подготовленный file candidate, а не пользовательский commit или разрешение удалить источники. [ADR0016](adr/0016-sst-merge-candidates.md) описывает ordering, владение handles, ошибки и lazy CRC.
 
 ## Чтение WAL поверх SST (C5c)
 
 Внутренний SstReadView держит индексы и handles нескольких SST, а на каждый get/scan получает живой WasmWal. Новые WAL values и tombstones перекрывают SST; более новая SST перекрывает старую. Scan возвращает только живые уникальные строки с прежними range/prefix/reverse/limit правилами. Закрытие view не закрывает WAL.
 
-Это общий путь чтения для будущего контейнерного backend, пока без переключения openDB. Он использует те же Rust правила, что native point get; и общий строгий decoder с Worker client. First-init WASM сериализован между внутренними файловыми модулями. Контракт — [ADR0017](adr/0017-layered-reads.md).
+Это общий путь чтения WAL/SST, используемый при подготовке контейнерного backend. Он использует те же Rust правила, что native point get; и общий строгий decoder с Worker client. First-init WASM сериализован между внутренними файловыми модулями. Контракт — [ADR0017](adr/0017-layered-reads.md).
 
 ## Контейнерный журнал (C6a)
 
 Реализован первый журнал нового container v1: immutable WAL/SST segments и append-only roots с CRC. Commit проверяет refs, синхронизирует данные, дописывает root, снова синхронизирует файл и только затем подтверждает публикацию. Partial EOF tail отбрасывается при reopen; full-record corruption, неизвестная версия и неверный root возвращают ошибку без fallback. Ошибка I/O или повторное обнаружение повреждения известного segment блокируют операции до reopen.
 
-Внутренний openContainerJournal(directory,name,{create}) открывает явный `.hkc` файл через exclusive sync handle. Создание требует create:true; старые `.wal` не импортируются. append лишь подготавливает segment; commit передаёт отдельные списки refs SST и WAL. payload пока opaque: этот слой не проверяет его как KV/WAL/SST и не является пользовательской транзакцией базы. Close не выполняет automatic commit. Имя контейнера не переключает существующий openDB — тот пока WAL-only.
+Внутренний openContainerJournal(directory,name,{create}) открывает явный `.hkc` файл через exclusive sync handle. Создание требует create:true; старые `.wal` не импортируются. append лишь подготавливает segment; commit передаёт отдельные списки refs SST и WAL. payload пока opaque: этот слой не проверяет его как KV/WAL/SST и не является пользовательской транзакцией базы. Close не выполняет automatic commit. Низкоуровневый journal не переключает mode openDB и не импортирует другие файлы.
 
 Лимиты:256MiB на segment,4096 active refs и4096 pending segments, offsets до2^53−1. Recovery проверяет payload CRC порциями64KiB; read_segment материализует весь выбранный payload. File растёт append-only; reclamation, power-loss safety и устойчивость первоначального имени этим срезом не доказываются. Формат и порядок восстановления — [ADR0018](adr/0018-container-journal-v1.md).
 
@@ -204,4 +242,4 @@ Flush переносит dirty changes в SST с tombstones и убирает WA
 
 Перед ремонтом incomplete outer tail проверяются active SST metadata и целые inner WAL payload: immutable partial/corrupt WAL не ремонтируется. Любой неизвестный исход persistent root publication или source corruption требует reopen; stale fallback отсутствует. KV output staging ограничен256MiB, dirty payload32MiB, active SST/WAL по64, batch1024ops/32MiB. При исчерпании table cap нужен compact; compaction output больше256MiB возвращает capacity error без замены root. File size не уменьшается.
 
-Публичный openDB пока не переключён на новый backend; Worker protocol2 и KV/localStorage API прежние. Внутренний adapter работает в Dedicated Worker и не импортирует legacy `.wal`. [ADR0019](adr/0019-container-kv.md) описывает coordinator и границы. Запускаемый native CLI-пример — [container.rs](../crates/hoke-core/examples/container.rs), команды в [TESTING.md](TESTING.md#22-контейнерная-kv-database-c6b).
+Публичный openDB подключает новый backend только с mode:"container-v1"; default wal-v1 и KV/localStorage API сохраняются. Adapter работает в Dedicated Worker и не импортирует legacy `.wal`. [ADR0019](adr/0019-container-kv.md) описывает coordinator и границы. Запускаемый native CLI-пример — [container.rs](../crates/hoke-core/examples/container.rs), команды в [TESTING.md](TESTING.md#22-контейнерная-kv-database-c6b).

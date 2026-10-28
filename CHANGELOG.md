@@ -2,15 +2,17 @@
 
 ## Unreleased — experimental Hoke
 
-- Подготовлен SST file bridge: существующий Rust SST v1 codec доступен WASM и внутреннему OPFS слою, с tombstones, bounded reads и cleanup. Browser openDB пока WAL-only; публикация SST не включена.
+- Подготовлен SST file bridge: существующий Rust SST v1 codec доступен WASM и внутреннему OPFS слою, с tombstones, bounded reads и cleanup. Файловая подготовка предшествовала подключению контейнера ниже.
 
-- Добавлено потоковое объединение SST-кандидатов через Rust/WASM/OPFS: newest wins, tombstones сохранены, исходники не удаляются; authoritative publication ещё не включена.
+- Добавлено потоковое объединение SST-кандидатов через Rust/WASM/OPFS: newest wins, tombstones сохранены, исходники не удаляются; Используется в подготовке SST.
 
 - Добавлен внутренний live read view поверх WAL и SST: единые Rust правила версий, bounded scan, tombstone masking и общее WASM initialization.
 
 - Реализован новый append-only container journal v1: CRC framing/root refs, two-barrier commit, strict recovery, poisoned writer и внутренний OPFS `.hkc` adapter. Старые WAL/SST форматы и openDB mode сохранены.
 
-- Реализован контейнерный KV coordinator через Rust/WASM/внутренний OPFS: atomic batch, get/scan, SST flush, full compaction и bounded source views. Добавлен native CLI example; публичный openDB пока WAL-only.
+- Реализован контейнерный KV coordinator через Rust/WASM/внутренний OPFS: atomic batch, get/scan, SST flush, full compaction и bounded source views. Добавлен native CLI example; Backend подключён к публичному API отдельным явным режимом ниже.
+
+- Публичный openDB получил явный mode container-v1: atomic writeBatch, SST flush, full compact и stats с bigint generation. Default wal-v1 сохранён, режимы изолированы и не мигрируют данные автоматически. Добавлены selector режима, batch и обслуживание в OPFS демо. Compaction пока не уменьшает размер файла.
 
 ### JavaScript package
 
@@ -42,7 +44,7 @@
 - Playwright browser scenarios for built module loading, persistence/reload, migrations, reset/clear and unavailable storage.
 - Python benchmark protocol/statistics tests. CI jobs prepared; external CI execution pending.
 
-The npm package currently ships KV/store/React. Rust Database is a separate native prototype; the experimental browser WAL-only hoke/db binding now uses WASM/Worker/OPFS. Full browser multi-file DB, multi-tab routing, React Native and devtools are future stages. Native batch uses manifest commits, not WAL group commit. Tests do not prove safety under physical power loss or production readiness.
+The npm package currently ships KV/store/React. Rust Database is a separate native prototype; the experimental hoke/db binding uses WASM/Worker/OPFS with default WAL and explicit container-v1 modes. Cross-tab routing, React Native and devtools are future stages. Native batch uses manifest commits, not WAL group commit. Tests do not prove safety under physical power loss or production readiness.
 
 Publication is pending: license, npm/GitHub ownership and final version/metadata. No package has been published.
 

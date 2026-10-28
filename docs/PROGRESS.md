@@ -17,21 +17,22 @@
 - [x] Команда pnpm demo и [инструкция проверки](TESTING.md) с ожидаемыми результатами.
 - [x] Проверка настоящего браузера: 9 Playwright scenarios прошли в Chrome 155.0.8059.84/Linux; jsdom остаётся отдельной проверкой.
 - [ ] Выбрать лицензию и владельца npm/GitHub, версию и метаданные для публикации.
-- [ ] Внешний GitHub-репозиторий и публикация npm — не выполнялись.
+- [x] Существующий GitHub origin barghxst/hoke доступен, проверенные commits отправляются в main по прямому разрешению пользователя.
+- [ ] Публикация npm — не выполнялась.
 
 ## Последняя общая проверка
 
-C6b: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после интеграции ContainerDatabase, WASM/OPFS adapter и запускаемого native примера:
+C6c: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` прошёл после подключения публичного container-v1, batch/maintenance API и демо:
 
 - Biome, JS/WASM build, TypeScript исходников/browser harness и установленного tarball без DOM/React;
-- 252 JS tests в10 файлах, включая13 registry и121 DB client/collection cases;
+- 283 JS tests в11 файлах, включая132 DB client,15 collection,15 registry и3 batch helper cases;
 - 60 actual-WASM tests,254 Rust tests,11 Python benchmark tests;
 - rustfmt, Clippy с -D warnings;
-- 79 настоящих Chrome155/Linux browser tests:66 OPFS/WASM/SST/read-view/container +4 OPFS demo +9 KV demo.
+- 89 настоящих Chrome155/Linux browser tests:75 OPFS/WASM/SST/read-view/container +5 OPFS demo +9 KV demo.
 
-SST v1/WAL v1 и Worker protocol2 не менялись; добавлен отдельный container v1 с новым magic/root journal по выбранному пользователем направлению. Все254 Rust tests также прошли на MSRV1.89.0. Внешний CI, другие браузеры/ОС и физическая потеря питания пока не проверялись.
+Persistent SST v1/WAL v1/container v1 не менялись; Worker transport повышен до protocol3 для публичных container операций. Все254 Rust tests также прошли на MSRV1.89.0. Статус внешнего GitHub CI не проверен: локальный gh не авторизован. Другие браузеры/ОС и физическая потеря питания пока не проверялись.
 
-Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен, но ещё не запускался на GitHub.
+Ранее отдельно проверено сохранение/удаление между тремя отдельными процессами Node с Web Storage. CI подготовлен; актуальный remote статус после push пока не проверен.
 
 После сообщения о версии при удалении добавлены два регрессионных сценария демо: обе кнопки reset/clear удаляют envelope целиком и после reload запись отсутствует. Следующее изменение создаёт новую запись с версией схемы 2, заданной в коде. Автоматические сценарии проходят; точная последовательность действий пользователя в настоящем браузере пока не установлена.
 
@@ -320,3 +321,15 @@ Journal — настоящий publication primitive, ещё не контейн
 - [x] 6 unit foundation +13 coordinator Rust tests,8 actual-WASM и5 real OPFS cases. Полный check:252 JS +254 Rust +60 WASM +11 Python +79 Chrome. Все254 Rust tests также прошли на1.89.0.
 
 ADR0019 фиксирует payload reuse и coordinator. Браузерные unknown-final-sync проверки восстанавливают целый batch без partial publication; invalid input не меняет root и не poison. Последующие source errors не возвращают старые values. File всё ещё append-only; staging256MiB и cap64 таблиц ограничивают первую реализацию. Не выполнены browser-process crash/power-loss proof, physical reclaim, automatic migration и публичное переключение openDB. Следующий срез — явный container-v1 mode в Worker/client с существующим lifecycle/subscriptions и demo.
+
+## C6c: публичный container-v1 и отправка коммитов
+
+- [x] openDB(name,{mode:"container-v1"}) подключает контейнер через Worker. Default wal-v1 сохранён, namespace разделены, имя не запускает migration/fallback. Protocol3 отклоняет несовместимый client/Worker без изменения persistent versions.
+- [x] Public writeBatch/flush/compact/stats с AbortSignal. WAL получает UNSUPPORTED без dispatch; container использует существующий root coordinator. Stats generation bigint и counters проверяются до возврата клиенту.
+- [x] DBCollection.writeBatch переводит все keys в namespace до dispatch, учитывает physical key+batch bytes. Shared normalize/pack helper переиспользуется низкоуровневым adapter; inputs/pending keys независимо копируются.
+- [x] WatchRegistry.notifyMany вызывается только после batch ACK: один вызов на matching registration, snapshot/global order и DBNotificationError committed=true сохранены. Empty batch/flush/compact/stats не уведомляют.
+- [x] Демо с default-WAL selector, atomic pair, flush/compact/stats и существующей отменой. Публичные README/OPFS/ADR0020 и tarball consumer без DOM обновлены. Исправлены исторически устаревшие README фразы о непроверенном браузере.
+- [x] После параллельной реализации прошёл полный check:283 JS +254 Rust +60 actual-WASM +11 Python +89 Chrome. Read-only review blocker не нашёл. Rust source не менялся;254 MSRV tests проверены в C6b.
+- [x] Пользователь явно разрешил commit и push; это отражено в AGENTS.md. Первые23 накопленных проверенных commits уже отправлены origin/main (до6b98b3b). Новые законченные задачи фиксируются и отправляются тем же обычным push без force. Все author/committer — barghxst, без assistant attribution.
+
+Публичный контейнер теперь доступен через demo/API. Дальше остаются DB schema migrations, дополнительная browser matrix/ошибки, explicit legacy import и отдельный протокол physical reclamation; multi-tab/RN/devtools идут последующими этапами плана. npm остаётся private, лицензия и внешняя публикация отдельно не согласованы. GitHub CI не объявляется зелёным без remote проверки.

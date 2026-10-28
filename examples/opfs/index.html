@@ -15,7 +15,8 @@
       padding: 20px;
     }
     button,
-    input {
+    input,
+    select {
       font: inherit;
       padding: 10px;
       margin: 4px 0;
@@ -33,13 +34,19 @@
   <body>
     <h1>Hoke: Rust/WASM → Worker → OPFS</h1>
     <p>
-      Экспериментальный WAL v1. Значение сохраняется в OPFS этого origin. Перезагрузите страницу и
-      снова откройте базу, чтобы проверить сохранение.
+      Экспериментальная база в OPFS этого origin. WAL хранит изменения в журнале; контейнер
+      поддерживает атомарные группы записей, SST и compaction. Режимы хранят данные отдельно: смена
+      режима не переносит старую базу.
     </p>
     <p>
-      Работают get/put/delete и scan с prefix/reverse/limit. SST и atomic batch ещё впереди. Один
-      владелец файла; второе открытие получит LOCKED.
+      Один владелец файла; второе открытие получит LOCKED. Перезагрузите страницу и откройте тот же
+      режим, чтобы проверить сохранение.
     </p>
+    <label for="mode">Режим базы</label>
+    <select id="mode">
+      <option value="wal-v1">WAL v1</option>
+      <option value="container-v1">Контейнер v1 — SST и atomic batch</option>
+    </select>
     <button id="open" type="button">Открыть базу</button>
     <button id="close" type="button" disabled>Закрыть базу</button>
     <button id="cancel" type="button" disabled>Отменить операцию</button>
@@ -50,6 +57,27 @@
     <button id="put" type="button" disabled>Сохранить</button>
     <button id="get" type="button" disabled>Прочитать</button>
     <button id="delete" type="button" disabled>Удалить ключ</button>
+    <h2>Атомарная группа записей</h2>
+    <p>В контейнере две записи сохраняются вместе. Каждая строка задаёт отдельный ключ.</p>
+    <label for="batch-key-1">Первый ключ</label>
+    <input id="batch-key-1" value="user:1">
+    <label for="batch-value-1">Значение</label>
+    <input id="batch-value-1" value="Alice">
+    <br>
+    <label for="batch-key-2">Второй ключ</label>
+    <input id="batch-key-2" value="user:2">
+    <label for="batch-value-2">Значение</label>
+    <input id="batch-value-2" value="Bob">
+    <button id="batch" type="button" disabled>Сохранить обе записи</button>
+    <h2>Обслуживание контейнера</h2>
+    <p>
+      Flush переносит изменения из памяти в SST. Compaction объединяет активные данные; размер файла
+      пока не уменьшается. Эти действия доступны только в контейнерном режиме.
+    </p>
+    <button id="flush" type="button" disabled>Перенести изменения в SST</button>
+    <button id="compact" type="button" disabled>Объединить активные данные</button>
+    <button id="stats" type="button" disabled>Показать состояние</button>
+    <pre id="statistics">Состояние ещё не запрашивалось.</pre>
     <h2>Список записей</h2>
     <p>
       Сохраните user:1 и user:2, задайте prefix user: и прочитайте список. Порядок ключей —
@@ -64,7 +92,7 @@
     <pre id="entries">Список ещё не запрашивался.</pre>
     <h2>Подписка на изменения</h2>
     <p>
-      Установите prefix выше и включите подписку. Она считает подтверждённые записи и удаления этого
+      Установите prefix выше и включите подписку. Она считает подтверждённые изменения этого
       диапазона. Для нового prefix включите подписку заново.
     </p>
     <button id="watch" type="button" disabled>Наблюдать prefix</button>
@@ -100,6 +128,9 @@
     }
     function controls() {
       element("open").disabled = busy || Boolean(db);
+      element("mode").disabled = busy || Boolean(db);
+      for (const id of ["batch", "flush", "compact", "stats"])
+        element(id).disabled = busy || db?.mode !== "container-v1";
       element("cancel").disabled = !controller || controller.signal.aborted;
       element("close").disabled = busy || !db;
       element("watch").disabled = busy || !db;
@@ -134,8 +165,9 @@
     });
     element("open").addEventListener("click", () =>
       attempt(async (signal) => {
-        db = await openDB("browser-demo", { signal });
+        db = await openDB("browser-demo", { mode: element("mode").value, signal });
         element("status").textContent = `База открыта: ${db.mode}.`;
+        element("statistics").textContent = "Состояние ещё не запрашивалось.";
       }, true),
     );
     element("close").addEventListener("click", () =>
@@ -164,6 +196,41 @@
       attempt(async (signal) => {
         await db.delete(key(), { signal });
         element("result").textContent = "Удаление подтверждено после OPFS flush.";
+      }, true),
+    );
+    element("batch").addEventListener("click", () =>
+      attempt(async (signal) => {
+        await db.writeBatch(
+          [1, 2].map((row) => ({
+            type: "put",
+            key: encoder.encode(element(`batch-key-${row}`).value),
+            value: encoder.encode(element(`batch-value-${row}`).value),
+          })),
+          { signal },
+        );
+        element("result").textContent = "Обе записи подтверждены одной атомарной группой.";
+      }, true),
+    );
+    element("flush").addEventListener("click", () =>
+      attempt(async (signal) => {
+        await db.flush({ signal });
+        element("result").textContent = "Изменения перенесены в SST.";
+      }, true),
+    );
+    element("compact").addEventListener("click", () =>
+      attempt(async (signal) => {
+        await db.compact({ signal });
+        element("result").textContent = "Активные данные объединены. Размер файла не уменьшен.";
+      }, true),
+    );
+    element("stats").addEventListener("click", () =>
+      attempt(async (signal) => {
+        const state = await db.stats({ signal });
+        element("statistics").textContent = JSON.stringify(
+          state,
+          (_name, value) => (typeof value === "bigint" ? value.toString() : value),
+          2,
+        );
       }, true),
     );
     element("scan").addEventListener("click", () =>

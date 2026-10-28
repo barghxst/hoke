@@ -262,3 +262,11 @@ cargo run -q -p hoke-core --example container -- "$container_demo/demo.hkc" info
 Ожидается value="dark", одна строка theme/dark; generation=5,tables=1,wal_segments=0,memtable_entries=0,memtable_bytes=0. Каждый вызов — отдельный процесс и reopen файла. Compact публикует активный набор, но не уменьшает размер append-only container. Ошибочные команды/размеры проверяются до создания файла; get/scan/info/maintenance не создают отсутствующий файл.
 
 Общий прогон после реализации прошёл: `HOKE_BROWSER_CHANNEL=chrome pnpm check:all` —252 JS/254 Rust/60 WASM/11 Python/79 Chrome. MSRV — `cargo +1.89.0 test --workspace --locked`, все254 Rust tests прошли. Новые OPFS cases в container-db.spec.ts проверяют batch/flush/compact/reopen, binary range/reverse/WAL masking, invalid input без нового root, inner corruption до ремонта outer tail, failed final sync с целым batch после reopen. Файловый пример — отдельная проверка сохранения между процессами, не power-loss proof. Public openDB UI ещё не переключён; [ADR0019](adr/0019-container-kv.md).
+
+## 23. Публичный container-v1 (C6c)
+
+`pnpm demo` → `/examples/opfs/`: выберите «Контейнер v1», откройте базу, prefix user:, включите наблюдение и сохраните две записи batch. Счётчик должен увеличиться один раз, scan покажет обе записи. Flush оставляет0 WAL refs/memtable, compact — не более1 active SST, логические данные и счётчик не меняются. После reload заново выберите контейнер и откройте базу; данные должны сохраниться. Выбор WAL открывает независимые прежние данные с тем же именем.
+
+Full check после интеграции прошёл:283 JS/254 Rust/60 WASM/11 Python/89 Chrome. Новые9 public container cases проверяют SST lifecycle, namespace/locks isolation, callback failures, collection batch/abort, invalid requests, corrupt root без переписывания и lost batch ACK с полным recovery. Новый demo case дополняет4 прежних WAL/cancel UI scenarios. Tarball consumer проверяет новые mode/batch/stats types без DOM/React и SSR import.
+
+CLI low-level пример из предыдущего раздела остаётся доступен. Protocol3 — версия транспорта, generation — root counter, schema version — отдельное понятие. Durable версии WAL/SST/container не менялись. [ADR0020](adr/0020-public-container-mode.md) фиксирует API, callbacks и ограничения. Проверки выполняются после интеграции среза; npm publish не запускается.
