@@ -1,5 +1,5 @@
 import { isThenable, observePromise } from "../sync-result.js";
-import { DBError } from "./index.js";
+import { DBError } from "./client-contract.js";
 import { MAX_KEY_BYTES } from "./protocol.js";
 import { compareBytes, type DBScanOptions, normalizeScanOptions } from "./scan.js";
 

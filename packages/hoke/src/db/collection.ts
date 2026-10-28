@@ -1,5 +1,5 @@
 import { type DBBatchOperation, MAX_BATCH_BYTES, normalizeBatch } from "./batch.js";
-import { type BrowserDB, DBError, type DBOperationOptions } from "./index.js";
+import { type BrowserDB, DBError, type DBOperationOptions } from "./client-contract.js";
 import { type DBListener, type DBRange, normalizeWatchRange } from "./notifications.js";
 import { MAX_KEY_BYTES } from "./protocol.js";
 import {
