@@ -1,4 +1,5 @@
-import { WasmWal } from "../../wasm/hoke_wasm.js";
+import { WasmContainerDb, WasmWal } from "../../wasm/hoke_wasm.js";
+import { normalizeBatch, packBatch } from "./batch.js";
 import {
   type DBErrorCode,
   MAX_KEY_BYTES,
@@ -35,7 +36,7 @@ interface WorkerScope {
 }
 
 const scope = globalThis as unknown as WorkerScope;
-let engine: WasmWal | undefined;
+let engine: WasmWal | WasmContainerDb | undefined;
 let handle: SyncHandle | undefined;
 let closed = false;
 
@@ -74,6 +75,13 @@ function validate(data: unknown): Request {
     throw new WorkerError("PROTOCOL", "Invalid protocol version or request id.");
   }
   if (request.op === "open") {
+    if (
+      request.mode !== undefined &&
+      request.mode !== "wal-v1" &&
+      request.mode !== "container-v1"
+    ) {
+      throw new WorkerError("INVALID_ARGUMENT", "Unknown database mode.");
+    }
     if (!validName(request.name)) {
       throw new WorkerError("INVALID_ARGUMENT", "Invalid database name.");
     }
@@ -96,13 +104,27 @@ function validate(data: unknown): Request {
         error instanceof Error ? error.message : "Invalid scan options",
       );
     }
-  } else if (request.op !== "close") {
+  } else if (request.op === "batch") {
+    try {
+      return { ...request, operations: normalizeBatch(request.operations) } as Request;
+    } catch (error) {
+      throw new WorkerError(
+        "INVALID_ARGUMENT",
+        error instanceof Error ? error.message : "Invalid batch operations",
+      );
+    }
+  } else if (
+    request.op !== "close" &&
+    request.op !== "flush" &&
+    request.op !== "compact" &&
+    request.op !== "stats"
+  ) {
     throw new WorkerError("PROTOCOL", "Unknown database operation.");
   }
   return data as Request;
 }
 
-async function open(name: string): Promise<void> {
+async function open(name: string, mode: "wal-v1" | "container-v1" = "wal-v1"): Promise<void> {
   if (closed || engine) {
     throw new WorkerError("CLOSED", "This worker can open a database only once.");
   }
@@ -123,8 +145,14 @@ async function open(name: string): Promise<void> {
   let acquired: SyncHandle | undefined;
   try {
     const root = await scope.navigator.storage.getDirectory();
-    const directory = await root.getDirectoryHandle("hoke-wal-v1", { create: true });
-    const file = await directory.getFileHandle(`${name}.wal`, { create: true });
+    const container = mode === "container-v1";
+    const directory = await root.getDirectoryHandle(
+      container ? "hoke-container-v1" : "hoke-wal-v1",
+      { create: true },
+    );
+    const file = await directory.getFileHandle(`${name}.${container ? "hkc" : "wal"}`, {
+      create: true,
+    });
     if (typeof file.createSyncAccessHandle !== "function") {
       throw new WorkerError(
         "UNSUPPORTED",
@@ -137,7 +165,8 @@ async function open(name: string): Promise<void> {
   }
   const owned = acquired;
   try {
-    engine = new WasmWal({
+    const Engine = mode === "container-v1" ? WasmContainerDb : WasmWal;
+    engine = new Engine({
       getSize: () => owned.getSize(),
       readAt: (buffer: Uint8Array, at: number) => owned.read(buffer, { at }),
       writeAt: (buffer: Uint8Array, at: number) => owned.write(buffer, { at }),
@@ -184,7 +213,7 @@ function close(): void {
 
 async function execute(request: Request): Promise<Uint8Array | null> {
   if (request.op === "open") {
-    await open(request.name);
+    await open(request.name, request.mode);
     return null;
   }
   if (request.op === "close") {
@@ -193,6 +222,19 @@ async function execute(request: Request): Promise<Uint8Array | null> {
   }
   if (!engine || closed) throw new WorkerError("CLOSED", "The database is not open.");
   switch (request.op) {
+    case "batch":
+    case "flush":
+    case "compact":
+    case "stats": {
+      if (!(engine instanceof WasmContainerDb)) {
+        throw new WorkerError("UNSUPPORTED", "This operation requires container-v1 mode.");
+      }
+      if (request.op === "batch") engine.write_batch(packBatch(request.operations));
+      else if (request.op === "flush") engine.flush();
+      else if (request.op === "compact") engine.compact();
+      else return engine.stats();
+      return null;
+    }
     case "get":
       return engine.get(request.key) ?? null;
     case "put":

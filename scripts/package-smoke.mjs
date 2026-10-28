@@ -31,6 +31,7 @@ try {
   assert(contents.includes("package/dist/db/wasm-init.js"));
   assert(contents.includes("package/dist/db/container-journal.js"));
   assert(contents.includes("package/dist/db/container-db.js"));
+  assert(contents.includes("package/dist/db/batch.js"));
   assert(contents.includes("package/wasm/hoke_wasm.js"));
   assert(contents.includes("package/wasm/hoke_wasm_bg.wasm"));
   assert(!/\.test\.|node_modules\/|package\/src\//.test(contents), "Unexpected files in tarball");
@@ -65,6 +66,8 @@ try {
     await assert.rejects(openDB('preaborted', { signal: controller.signal }),
       error => error instanceof DBError && error.code === 'ABORTED');
     await assert.rejects(openDB('server'), error => error instanceof DBError && error.code === 'UNSUPPORTED');
+    await assert.rejects(openDB('server', { mode: 'container-v1' }), error => error instanceof DBError && error.code === 'UNSUPPORTED');
+    await assert.rejects(openDB('server', { mode: 'invalid' }), error => error instanceof DBError && error.code === 'INVALID_ARGUMENT');
     assert.equal(typeof globalThis.window, 'undefined');
     assert.throws(() => import.meta.resolve('react'), { code: 'ERR_MODULE_NOT_FOUND' });
     const kv = createKV();
@@ -110,7 +113,7 @@ try {
     join(directory, "consumer.ts"),
     `
     import { createKV, createStore, defineStore } from 'hoke/kv';
-    import { openDB, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry, type DBAbortSignal, type DBOperationOptions } from 'hoke/db';
+    import { openDB, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry, type DBAbortSignal, type DBOperationOptions, type DBBatchOperation, type DBStats, type DBMode } from 'hoke/db';
     const signal: DBAbortSignal = {
       aborted: false,
       addEventListener(_type, _listener, _options) {},
@@ -118,14 +121,24 @@ try {
     };
     const options: DBOperationOptions = { signal };
     const pending: Promise<BrowserDB> = openDB('typed', { ...options, timeoutMs: 100 });
+    const container: Promise<BrowserDB> = openDB('typed-container', { ...options, mode: 'container-v1' });
+    void container;
     void pending;
     async function inspect(db: BrowserDB) {
+      const mode: DBMode = db.mode;
+      const batch: DBBatchOperation[] = [{ type: 'put', key: new Uint8Array(), value: new Uint8Array() }, { type: 'delete', key: new Uint8Array() }];
+      await db.writeBatch(batch, options);
+      await db.flush(options); await db.compact(options);
+      const stats: DBStats = await db.stats(options);
+      const generation: bigint = stats.generation;
+      void mode; void generation;
       await db.get(new Uint8Array(), options);
       await db.put(new Uint8Array(), new Uint8Array(), options);
       await db.delete(new Uint8Array(), options);
       await db.scan(undefined, options);
       const rows: DBEntry[] = await db.scan({ start: { key: new Uint8Array(), inclusive: true }, reverse: true, limit: 5 });
       const collection: DBCollection = db.collection(Uint8Array.of(0, 255));
+      await collection.writeBatch(batch, options);
       const relative: DBEntry[] = await collection.scan({ prefix: Uint8Array.of(1) }, options);
       await collection.get(new Uint8Array(), options);
       await collection.put(new Uint8Array(), new Uint8Array(), options);

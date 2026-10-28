@@ -245,3 +245,52 @@ describe("database notification registry", () => {
     }
   });
 });
+
+describe("batch invalidations", () => {
+  it("notifies each matching registration once in registration order", () => {
+    const registry = new WatchRegistry();
+    const calls: string[] = [];
+    registry.subscribeRange({}, () => {
+      calls.push("range");
+    });
+    registry.subscribe(bytes(0), () => {
+      calls.push("zero");
+    });
+    const duplicate = () => {
+      calls.push("duplicate");
+    };
+    registry.subscribeRange({ prefix: bytes(1) }, duplicate);
+    registry.subscribeRange({ prefix: bytes(1) }, duplicate);
+    registry.notifyMany([bytes(1), bytes(0), bytes(1)]);
+    expect(calls).toEqual(["range", "zero", "duplicate", "duplicate"]);
+    registry.notifyMany([]);
+    expect(calls).toHaveLength(4);
+  });
+  it("takes one snapshot for the whole batch and aggregates callback failures", () => {
+    const registry = new WatchRegistry();
+    const calls: string[] = [];
+    let stop = () => {};
+    registry.subscribe(bytes(1), () => {
+      calls.push("first");
+      stop();
+      registry.subscribe(bytes(2), () => {
+        calls.push("late");
+      });
+      throw new Error("first callback");
+    });
+    stop = registry.subscribe(bytes(2), () => {
+      calls.push("removed");
+    });
+    registry.subscribeRange({}, () => {
+      calls.push("last");
+      throw new Error("last callback");
+    });
+    const error = registry.notifyMany([bytes(1), bytes(2)]);
+    expect(calls).toEqual(["first", "last"]);
+    expect(error).toBeInstanceOf(DBNotificationError);
+    expect(error?.committed).toBe(true);
+    expect(error?.errors).toHaveLength(2);
+    registry.clear();
+    expect(registry.notifyMany([bytes(1)])).toBeUndefined();
+  });
+});

@@ -1,3 +1,4 @@
+import { type DBBatchOperation, normalizeBatch } from "./batch.js";
 import { createCollection, type DBCollection } from "./collection.js";
 import { type DBListener, type DBRange, WatchRegistry } from "./notifications.js";
 import {
@@ -8,12 +9,15 @@ import {
 } from "./scan.js";
 import { decodeScan } from "./scan-packet.js";
 
+export type { DBBatchOperation } from "./batch.js";
 export type { DBCollection } from "./collection.js";
 export { type DBListener, DBNotificationError, type DBRange } from "./notifications.js";
+export type { DBMode } from "./protocol.js";
 export type { DBEntry, DBScanOptions, ScanBound } from "./scan.js";
 
 import {
   type DBErrorCode,
+  type DBMode,
   MAX_KEY_BYTES,
   MAX_VALUE_BYTES,
   PROTOCOL_VERSION,
@@ -32,8 +36,11 @@ export class DBError extends Error {
 }
 
 export interface BrowserDB {
-  /** This first browser engine persists the existing WAL v1 format. */
-  readonly mode: "wal-v1";
+  readonly mode: DBMode;
+  writeBatch(operations: readonly DBBatchOperation[], options?: DBOperationOptions): Promise<void>;
+  flush(options?: DBOperationOptions): Promise<void>;
+  compact(options?: DBOperationOptions): Promise<void>;
+  stats(options?: DBOperationOptions): Promise<DBStats>;
   get(key: Uint8Array, options?: DBOperationOptions): Promise<Uint8Array | undefined>;
   put(key: Uint8Array, value: Uint8Array, options?: DBOperationOptions): Promise<void>;
   delete(key: Uint8Array, options?: DBOperationOptions): Promise<void>;
@@ -42,6 +49,14 @@ export interface BrowserDB {
   subscribeRange(range: DBRange, listener: DBListener): () => void;
   collection(prefix: Uint8Array): DBCollection;
   close(): Promise<void>;
+}
+
+export interface DBStats {
+  generation: bigint;
+  tableCount: number;
+  walSegments: number;
+  memtableEntries: number;
+  memtableBytes: number;
 }
 
 /** Structural so consumers do not need DOM types or a global AbortSignal. */
@@ -56,6 +71,7 @@ export interface DBOperationOptions {
 }
 
 export interface OpenDBOptions extends DBOperationOptions {
+  mode?: DBMode;
   timeoutMs?: number;
 }
 
@@ -102,10 +118,10 @@ type Command = Request extends infer R
     ? Omit<R, "version" | "id">
     : never
   : never;
-type Result = Uint8Array | DBEntry[] | null;
+type Result = Uint8Array | DBEntry[] | DBStats | null;
 type Pending = {
   scanOptions?: NormalizedScanOptions;
-  changedKey?: Uint8Array;
+  changedKeys?: Uint8Array[];
   op: Request["op"];
   resolve: (value: Result) => void;
   reject: (error: Error) => void;
@@ -137,8 +153,30 @@ function copyBytes(value: Uint8Array, maximum: number): Uint8Array {
   }
 }
 
+function decodeStats(packet: unknown): DBStats {
+  if (!(packet instanceof Uint8Array) || packet.byteLength !== 40) {
+    throw new Error("Invalid stats packet");
+  }
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  const generation = view.getBigUint64(0, true);
+  const limits = [64n, 64n, 1_000_000n, 33_554_432n];
+  const counters = limits.map((limit, index) => {
+    const value = view.getBigUint64((index + 1) * 8, true);
+    if (value > limit || value > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new Error("Invalid stats counter");
+    return Number(value);
+  });
+  if (generation < 1n) throw new Error("Invalid stats generation");
+  return {
+    generation,
+    tableCount: counters[0] as number,
+    walSegments: counters[1] as number,
+    memtableEntries: counters[2] as number,
+    memtableBytes: counters[3] as number,
+  };
+}
+
 class Client implements BrowserDB {
-  readonly mode = "wal-v1" as const;
   private state: "opening" | "open" | "closing" | "closed" = "opening";
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
@@ -149,6 +187,7 @@ class Client implements BrowserDB {
   constructor(
     private readonly worker: Worker,
     private readonly timeoutMs: number,
+    readonly mode: DBMode,
   ) {
     worker.onmessage = (event: MessageEvent<unknown>) => this.receive(event.data);
     worker.onerror = (event) => {
@@ -161,7 +200,10 @@ class Client implements BrowserDB {
 
   async open(name: string, signal?: Cancellation): Promise<void> {
     try {
-      await this.request({ op: "open", name }, signal);
+      await this.request(
+        this.mode === "container-v1" ? { op: "open", name, mode: this.mode } : { op: "open", name },
+        signal,
+      );
       if (this.state !== "opening") {
         throw this.terminalError ?? new DBError("CLOSED", "Database is closed");
       }
@@ -214,6 +256,42 @@ class Client implements BrowserDB {
       { op: "scan", options: normalized },
       cancellation(operationOptions),
     )) as DBEntry[];
+  }
+
+  async writeBatch(
+    operations: readonly DBBatchOperation[],
+    options?: DBOperationOptions,
+  ): Promise<void> {
+    this.assertContainer();
+    let normalized: DBBatchOperation[];
+    try {
+      normalized = normalizeBatch(operations);
+    } catch {
+      throw new DBError("INVALID_ARGUMENT", "Invalid batch operations");
+    }
+    await this.request({ op: "batch", operations: normalized }, cancellation(options));
+  }
+
+  async flush(options?: DBOperationOptions): Promise<void> {
+    this.assertContainer();
+    await this.request({ op: "flush" }, cancellation(options));
+  }
+
+  async compact(options?: DBOperationOptions): Promise<void> {
+    this.assertContainer();
+    await this.request({ op: "compact" }, cancellation(options));
+  }
+
+  async stats(options?: DBOperationOptions): Promise<DBStats> {
+    this.assertContainer();
+    return (await this.request({ op: "stats" }, cancellation(options))) as DBStats;
+  }
+
+  private assertContainer(): void {
+    this.assertOpen();
+    if (this.mode !== "container-v1") {
+      throw new DBError("UNSUPPORTED", "This operation requires container-v1 mode");
+    }
   }
 
   subscribe(key: Uint8Array, listener: DBListener): () => void {
@@ -295,8 +373,10 @@ class Client implements BrowserDB {
         settled: false,
         ...(command.op === "scan" ? { scanOptions: command.options } : {}),
         ...(command.op === "put" || command.op === "delete"
-          ? { changedKey: new Uint8Array(command.key) }
-          : {}),
+          ? { changedKeys: [new Uint8Array(command.key)] }
+          : command.op === "batch"
+            ? { changedKeys: command.operations.map((operation) => new Uint8Array(operation.key)) }
+            : {}),
       };
       this.pending.set(id, pending);
       let dispatched = false;
@@ -364,7 +444,9 @@ class Client implements BrowserDB {
     if (response.ok) {
       let result: Result;
       try {
-        if (pending.op === "scan" && pending.scanOptions) {
+        if (pending.op === "stats") {
+          result = decodeStats(response.result);
+        } else if (pending.op === "scan" && pending.scanOptions) {
           result = decodeScan(response.result, pending.scanOptions);
         } else if (response.result === null) {
           result = null;
@@ -383,8 +465,8 @@ class Client implements BrowserDB {
       }
       this.finish(response.id, pending);
       const notificationError =
-        this.state === "open" && pending.changedKey
-          ? this.watchers.notify(pending.changedKey)
+        this.state === "open" && pending.changedKeys
+          ? this.watchers.notifyMany(pending.changedKeys)
           : undefined;
       if (notificationError) pending.reject(notificationError);
       else pending.resolve(result);
@@ -415,6 +497,10 @@ export async function openDB(name: string, options: OpenDBOptions = {}): Promise
   if (options === null || typeof options !== "object") {
     throw new DBError("INVALID_ARGUMENT", "Expected database options object");
   }
+  const mode = options.mode === undefined ? "wal-v1" : options.mode;
+  if (mode !== "wal-v1" && mode !== "container-v1") {
+    throw new DBError("INVALID_ARGUMENT", "Invalid database mode");
+  }
   const timeoutMs = options.timeoutMs === undefined ? 30_000 : options.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) {
     throw new DBError("INVALID_ARGUMENT", "timeoutMs must be an integer from 1 to 600000");
@@ -433,7 +519,7 @@ export async function openDB(name: string, options: OpenDBOptions = {}): Promise
   } catch {
     throw new DBError("WORKER", "Cannot start database worker");
   }
-  const client = new Client(worker, timeoutMs);
+  const client = new Client(worker, timeoutMs, mode);
   await client.open(name, signal);
   return client;
 }

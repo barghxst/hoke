@@ -82,9 +82,15 @@ export class WatchRegistry {
   }
 
   notify(key: Uint8Array): DBNotificationError | undefined {
+    return this.notifyMany([key]);
+  }
+
+  notifyMany(keys: readonly Uint8Array[]): DBNotificationError | undefined {
     // Determine matching registrations before invoking user code. Reentrant calls
     // get their own snapshot; additions cannot join the event already in flight.
-    const snapshot = [...this.subscriptions].filter((entry) => entry.matches(key));
+    const snapshot = [...this.subscriptions].filter((entry) =>
+      keys.some((key) => entry.matches(key)),
+    );
     const errors: unknown[] = [];
     for (const entry of snapshot) {
       if (!this.subscriptions.has(entry)) continue;

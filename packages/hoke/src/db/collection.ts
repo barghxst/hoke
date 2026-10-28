@@ -1,3 +1,4 @@
+import { type DBBatchOperation, MAX_BATCH_BYTES, normalizeBatch } from "./batch.js";
 import { type BrowserDB, DBError, type DBOperationOptions } from "./index.js";
 import { type DBListener, type DBRange, normalizeWatchRange } from "./notifications.js";
 import { MAX_KEY_BYTES } from "./protocol.js";
@@ -14,6 +15,7 @@ export interface DBCollection {
   put(key: Uint8Array, value: Uint8Array, options?: DBOperationOptions): Promise<void>;
   delete(key: Uint8Array, options?: DBOperationOptions): Promise<void>;
   scan(options?: DBScanOptions, operationOptions?: DBOperationOptions): Promise<DBEntry[]>;
+  writeBatch(operations: readonly DBBatchOperation[], options?: DBOperationOptions): Promise<void>;
   subscribe(key: Uint8Array, listener: DBListener): () => void;
   subscribeRange(range: DBRange, listener: DBListener): () => void;
 }
@@ -61,6 +63,25 @@ export function createCollection(db: BrowserDB, prefix: Uint8Array): DBCollectio
       const translated = physical(key);
       if (options === undefined) await db.delete(translated);
       else await db.delete(translated, options);
+    },
+    async writeBatch(operations, options) {
+      let translated: DBBatchOperation[];
+      try {
+        let total = 0;
+        translated = normalizeBatch(operations).map((operation) => {
+          const key = physical(operation.key);
+          total += key.length + (operation.type === "put" ? operation.value.length : 0);
+          if (total > MAX_BATCH_BYTES) throw new TypeError("Physical batch exceeds 32 MiB");
+          return operation.type === "put"
+            ? { type: "put", key, value: operation.value }
+            : { type: "delete", key };
+        });
+      } catch (error) {
+        if (error instanceof DBError) throw error;
+        throw new DBError("INVALID_ARGUMENT", "Invalid collection batch");
+      }
+      if (options === undefined) await db.writeBatch(translated);
+      else await db.writeBatch(translated, options);
     },
     subscribe(key, listener) {
       return db.subscribe(physical(key), listener);

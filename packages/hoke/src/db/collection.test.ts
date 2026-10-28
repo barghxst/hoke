@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { DBBatchOperation } from "./batch.js";
 import { createCollection } from "./collection.js";
 import { type BrowserDB, DBError } from "./index.js";
 import { type DBListener, type DBRange, WatchRegistry } from "./notifications.js";
@@ -13,7 +14,7 @@ function database() {
     if (closed) throw new DBError("CLOSED", "Database is closed");
   }
   const db: BrowserDB = {
-    mode: "wal-v1",
+    mode: "container-v1",
     get: vi.fn(async (key: Uint8Array) => {
       open();
       return entries.get(token(key));
@@ -29,6 +30,32 @@ function database() {
       entries.delete(token(key));
       const error = watchers.notify(key);
       if (error) throw error;
+    }),
+    writeBatch: vi.fn(async (operations: readonly DBBatchOperation[]) => {
+      open();
+      for (const operation of operations) {
+        if (operation.type === "put")
+          entries.set(token(operation.key), new Uint8Array(operation.value));
+        else entries.delete(token(operation.key));
+      }
+      const error = watchers.notifyMany(operations.map((operation) => operation.key));
+      if (error) throw error;
+    }),
+    flush: vi.fn(async () => {
+      open();
+    }),
+    compact: vi.fn(async () => {
+      open();
+    }),
+    stats: vi.fn(async () => {
+      open();
+      return {
+        generation: 1n,
+        tableCount: 0,
+        walSegments: 0,
+        memtableEntries: 0,
+        memtableBytes: 0,
+      };
     }),
     scan: vi.fn(async (_options?: DBScanOptions): Promise<DBEntry[]> => {
       open();
@@ -298,5 +325,52 @@ describe("collection operation options", () => {
       expect.objectContaining({ prefix: physical }),
       options,
     );
+  });
+});
+
+describe("collection batches", () => {
+  it("translates every key before dispatch and notifies once per matching registration", async () => {
+    const { db } = database();
+    const collection = db.collection(bytes(0, 255));
+    const listener = vi.fn();
+    collection.subscribeRange({}, listener);
+    await collection.writeBatch([
+      { type: "put", key: bytes(1), value: bytes(7) },
+      { type: "put", key: bytes(2), value: bytes(8) },
+      { type: "delete", key: bytes(1) },
+    ]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(await collection.get(bytes(1))).toBeUndefined();
+    expect(await collection.get(bytes(2))).toEqual(bytes(8));
+    expect(db.writeBatch).toHaveBeenCalledWith([
+      { type: "put", key: bytes(1, 0, 0, 0, 2, 0, 255, 1), value: bytes(7) },
+      { type: "put", key: bytes(1, 0, 0, 0, 2, 0, 255, 2), value: bytes(8) },
+      { type: "delete", key: bytes(1, 0, 0, 0, 2, 0, 255, 1) },
+    ]);
+  });
+  it("forwards cancellation options and rejects oversized physical keys before dispatch", async () => {
+    const { db } = database();
+    const collection = db.collection(bytes(9));
+    const controller = new AbortController();
+    await collection.writeBatch([{ type: "delete", key: bytes() }], { signal: controller.signal });
+    expect(db.writeBatch).toHaveBeenCalledWith([{ type: "delete", key: bytes(1, 0, 0, 0, 1, 9) }], {
+      signal: controller.signal,
+    });
+    vi.mocked(db.writeBatch).mockClear();
+    await expect(
+      collection.writeBatch([{ type: "delete", key: new Uint8Array(65531) }]),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(db.writeBatch).not.toHaveBeenCalled();
+  });
+  it("includes namespace bytes in the physical batch budget", async () => {
+    const { db } = database();
+    const collection = db.collection(bytes(9));
+    await expect(
+      collection.writeBatch([
+        { type: "put", key: bytes(0), value: new Uint8Array(16 * 1024 * 1024) },
+        { type: "put", key: bytes(1), value: new Uint8Array(16 * 1024 * 1024 - 2) },
+      ]),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(db.writeBatch).not.toHaveBeenCalled();
   });
 });

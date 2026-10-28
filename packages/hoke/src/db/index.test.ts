@@ -1128,3 +1128,236 @@ describe("adversarial cancellation cleanup", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+async function containerConnected() {
+  const opening = openDB("container", { mode: "container-v1" });
+  const worker = latest();
+  expect(worker.requests[0]).toMatchObject({ op: "open", mode: "container-v1" });
+  worker.respond(1);
+  return { db: await opening, worker };
+}
+
+function statsPacket(values: bigint[] = [1n, 0n, 0n, 0n, 0n]) {
+  const bytes = new Uint8Array(40);
+  const view = new DataView(bytes.buffer);
+  values.forEach((value, index) => {
+    view.setBigUint64(index * 8, value, true);
+  });
+  return bytes;
+}
+
+describe("public container mode", () => {
+  it.each([null, "container", "", 1, {}, []])(
+    "rejects invalid mode %j before creating Worker",
+    async (mode) => {
+      await expect(openDB("test", { mode: mode as "wal-v1" })).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+      });
+      expect(FakeWorker.instances).toHaveLength(0);
+    },
+  );
+
+  it("rejects container operations in WAL mode without dispatch or poisoning", async () => {
+    const { db, worker } = await connected();
+    for (const result of [db.writeBatch([]), db.flush(), db.compact(), db.stats()]) {
+      await expect(result).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    }
+    expect(worker.requests).toHaveLength(1);
+    const reading = db.get(new Uint8Array());
+    worker.respond(2);
+    await expect(reading).resolves.toBeUndefined();
+    const closing = db.close();
+    worker.respond(3);
+    await closing;
+  });
+
+  it("decodes exact statistics and keeps generation as bigint", async () => {
+    const { db, worker } = await containerConnected();
+    expect(db.mode).toBe("container-v1");
+    const result = db.stats();
+    worker.respond(
+      2,
+      statsPacket([18_446_744_073_709_551_615n, 64n, 64n, 1_000_000n, 33_554_432n]),
+    );
+    await expect(result).resolves.toEqual({
+      generation: 18_446_744_073_709_551_615n,
+      tableCount: 64,
+      walSegments: 64,
+      memtableEntries: 1_000_000,
+      memtableBytes: 33_554_432,
+    });
+    const flushing = db.flush();
+    const compacting = db.compact();
+    expect(worker.requests.slice(2).map((request) => request.op)).toEqual(["flush", "compact"]);
+    worker.respond(3);
+    worker.respond(4);
+    await Promise.all([flushing, compacting]);
+    const closing = db.close();
+    worker.respond(5);
+    await closing;
+  });
+
+  it.each([
+    null,
+    new Uint8Array(39),
+    new Uint8Array(41),
+    statsPacket([0n, 0n, 0n, 0n, 0n]),
+    statsPacket([1n, 65n, 0n, 0n, 0n]),
+    statsPacket([1n, 0n, 65n, 0n, 0n]),
+    statsPacket([1n, 0n, 0n, 1_000_001n, 0n]),
+    statsPacket([1n, 0n, 0n, 0n, 33_554_433n]),
+  ])("rejects malformed statistics and terminates the session", async (packet) => {
+    const { db, worker } = await containerConnected();
+    const result = db.stats();
+    const checked = expect(result).rejects.toMatchObject({ code: "PROTOCOL" });
+    worker.respond(2, packet);
+    await checked;
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    await expect(db.stats()).rejects.toMatchObject({ code: "CLOSED" });
+  });
+
+  it("copies all batch input and invalidates each matching registration once", async () => {
+    const { db, worker } = await containerConnected();
+    const key = new Uint8Array([1]);
+    const value = new Uint8Array([2]);
+    const exact = vi.fn();
+    const range = vi.fn();
+    db.subscribe(key, exact);
+    db.subscribeRange({}, range);
+    const mutation = db.writeBatch([
+      { type: "put", key, value },
+      { type: "delete", key },
+    ]);
+    key[0] = 9;
+    value[0] = 9;
+    const command = worker.requests[1];
+    expect(command).toMatchObject({
+      op: "batch",
+      operations: [
+        { type: "put", key: new Uint8Array([1]), value: new Uint8Array([2]) },
+        { type: "delete", key: new Uint8Array([1]) },
+      ],
+    });
+    if (command?.op !== "batch") throw new Error("Expected batch");
+    command.operations[0]?.key.fill(7);
+    command.operations[1]?.key.fill(7);
+    expect(exact).not.toHaveBeenCalled();
+    worker.respond(2);
+    await mutation;
+    expect(exact).toHaveBeenCalledOnce();
+    expect(range).toHaveBeenCalledOnce();
+    const empty = db.writeBatch([]);
+    worker.respond(3);
+    await empty;
+    expect(range).toHaveBeenCalledOnce();
+    const closing = db.close();
+    worker.respond(4);
+    await closing;
+  });
+
+  it("rejects invalid batches locally before any operation is posted", async () => {
+    const { db, worker } = await containerConnected();
+    await expect(
+      db.writeBatch([{ type: "put", key: new Uint8Array(), value: null as unknown as Uint8Array }]),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(worker.requests).toHaveLength(1);
+    const closing = db.close();
+    worker.respond(2);
+    await closing;
+  });
+
+  it("reports batch subscriber failures after ACK and detaches signal before callbacks", async () => {
+    const { db, worker } = await containerConnected();
+    const signal = new TestAbortSignal();
+    const after = vi.fn();
+    db.subscribeRange({}, () => {
+      signal.abort();
+      throw new Error("callback");
+    });
+    db.subscribeRange({}, after);
+    const mutation = db.writeBatch([{ type: "delete", key: new Uint8Array() }], { signal });
+    const checked = expect(mutation).rejects.toMatchObject({
+      code: "SUBSCRIBER_FAILED",
+      committed: true,
+    });
+    worker.respond(2);
+    await checked;
+    expect(after).toHaveBeenCalledOnce();
+    expect(signal.listeners.size).toBe(0);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const closing = db.close();
+    worker.respond(3);
+    await closing;
+  });
+
+  it("handles pre-abort locally and active cancellation across pending container requests", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await containerConnected();
+    const pre = new TestAbortSignal();
+    pre.abort();
+    await expect(db.flush({ signal: pre })).rejects.toMatchObject({ code: "ABORTED" });
+    expect(worker.requests).toHaveLength(1);
+    const signal = new TestAbortSignal();
+    const mutation = db.writeBatch([{ type: "delete", key: new Uint8Array() }], { signal });
+    const stats = db.stats();
+    const checked = Promise.all(
+      [mutation, stats].map((promise) =>
+        expect(promise).rejects.toMatchObject({ code: "ABORTED" }),
+      ),
+    );
+    signal.abort();
+    await checked;
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(signal.listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("container request lifecycle", () => {
+  it("does not notify after a failed batch and keeps the connection usable", async () => {
+    const { db, worker } = await containerConnected();
+    const callback = vi.fn();
+    db.subscribeRange({}, callback);
+    const batch = db.writeBatch([{ type: "delete", key: new Uint8Array([1]) }]);
+    const checked = expect(batch).rejects.toMatchObject({ code: "STORAGE" });
+    worker.error(2);
+    await checked;
+    expect(callback).not.toHaveBeenCalled();
+    const stats = db.stats();
+    worker.respond(3, statsPacket());
+    await expect(stats).resolves.toMatchObject({ generation: 1n });
+    const closing = db.close();
+    worker.respond(4);
+    await closing;
+  });
+
+  it("never invalidates subscriptions for flush, compact or statistics", async () => {
+    const { db, worker } = await containerConnected();
+    const callback = vi.fn();
+    db.subscribeRange({}, callback);
+    const flushing = db.flush();
+    const compacting = db.compact();
+    const stats = db.stats();
+    worker.respond(2);
+    worker.respond(3);
+    worker.respond(4, statsPacket());
+    await Promise.all([flushing, compacting, stats]);
+    expect(callback).not.toHaveBeenCalled();
+    const closing = db.close();
+    worker.respond(5);
+    await closing;
+  });
+
+  it("cleans cancellation listeners when a container operation times out", async () => {
+    vi.useFakeTimers();
+    const { db, worker } = await containerConnected();
+    const signal = new TestAbortSignal();
+    const compacting = db.compact({ signal });
+    const checked = expect(compacting).rejects.toMatchObject({ code: "TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await checked;
+    expect(signal.listeners.size).toBe(0);
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
