@@ -60,3 +60,5 @@ export function useStore<T, S>(
   useDebugValue(value);
   return value;
 }
+
+export { type DBValueState, useDBValue } from "./db-value.js";
