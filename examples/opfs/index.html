@@ -29,9 +29,32 @@
     #error {
       color: #d44;
     }
+    .demo-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid #8885;
+      font-size: 0.9rem;
+    }
+    .demo-nav a {
+      color: inherit;
+      text-underline-offset: 4px;
+    }
+    .demo-nav a:focus-visible {
+      outline: 2px solid currentColor;
+      outline-offset: 4px;
+    }
     </style>
   </head>
   <body>
+    <nav class="demo-nav" aria-label="Демонстрации">
+      <a href="/">Все демо</a>
+      <a href="/examples/documents/">Задачи</a>
+      <a href="/examples/web/">Настройки</a>
+      <a href="/examples/opfs/" aria-current="page">Байтовая база</a>
+    </nav>
     <h1>Hoke: Rust/WASM → Worker → OPFS</h1>
     <p>
       Экспериментальная база в OPFS этого origin. WAL хранит изменения в журнале; контейнер

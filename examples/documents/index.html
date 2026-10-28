@@ -8,63 +8,217 @@
     :root {
       color-scheme: light dark;
       font-family: system-ui, sans-serif;
+      line-height: 1.6;
+      background: light-dark(#f6f7f9, #111416);
+      color: light-dark(#182127, #e8edf0);
+    }
+    * {
+      box-sizing: border-box;
     }
     body {
-      max-width: 720px;
-      margin: 40px auto;
-      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+    .demo-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      padding-bottom: 18px;
+      margin-bottom: 32px;
+      border-bottom: 1px solid light-dark(#d6dde0, #344047);
+      font-size: 0.9rem;
+    }
+    .demo-nav a {
+      color: inherit;
+      text-underline-offset: 4px;
+    }
+    .demo-nav [aria-current] {
+      color: light-dark(#125d43, #a0e1c4);
+      font-weight: 650;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 2.6rem);
+      line-height: 1.2;
+      margin: 0 0 16px;
+    }
+    .intro {
+      color: light-dark(#52616a, #acbac2);
+      margin-bottom: 28px;
+    }
+    .composer {
+      border: 1px solid light-dark(#d6dde0, #344047);
+      border-radius: 16px;
+      background: light-dark(#fff, #1a2024);
+      padding: 24px;
+    }
+    form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px 12px;
+      align-items: center;
+    }
+    form label {
+      grid-column: 1 / -1;
+      font-weight: 600;
     }
     button,
     input {
       font: inherit;
-      padding: 10px;
     }
-    form,
-    li {
-      display: flex;
-      gap: 12px;
-      align-items: center;
+    button {
+      border: 1px solid light-dark(#b7c7bf, #4f6e5e);
+      border-radius: 8px;
+      padding: 9px 14px;
+      cursor: pointer;
+      color: light-dark(#125d43, #a0e1c4);
+      background: light-dark(#edf5f0, #20372b);
     }
-    form input {
-      flex: 1;
+    button:hover:not(:disabled) {
+      background: light-dark(#dcece2, #2c4939);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: wait;
+    }
+    #add {
+      color: light-dark(#fff, #10241a);
+      background: light-dark(#23694c, #a0e1c4);
+      border-color: transparent;
+      font-weight: 650;
+    }
+    #add:hover:not(:disabled) {
+      background: light-dark(#18583d, #b9efd7);
+    }
+    #task-text {
+      width: 100%;
       min-width: 0;
+      padding: 9px 12px;
+      border: 1px solid light-dark(#b8c4cb, #52616a);
+      border-radius: 8px;
+      background: light-dark(#fff, #111416);
+      color: inherit;
+    }
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid light-dark(#23694c, #a0e1c4);
+      outline-offset: 3px;
+    }
+    .samples {
+      margin: 18px 0 0;
+    }
+    #status,
+    #error {
+      font-size: 0.9rem;
+      margin: 18px 0;
+    }
+    #status {
+      color: light-dark(#365f53, #a6c7b7);
+    }
+    #error {
+      color: light-dark(#a11212, #ff9696);
+      white-space: pre-wrap;
+    }
+    #empty {
+      text-align: center;
+      border: 1px dashed light-dark(#bcc9cf, #415058);
+      border-radius: 12px;
+      padding: 32px 20px;
+      color: light-dark(#52616a, #acbac2);
     }
     ul {
       padding: 0;
       list-style: none;
     }
     li {
-      padding: 12px 0;
-      border-bottom: 1px solid #8885;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin: 10px 0;
+      padding: 14px 16px;
+      border: 1px solid light-dark(#d6dde0, #344047);
+      border-radius: 12px;
+      background: light-dark(#fff, #1a2024);
+    }
+    li input {
+      width: 19px;
+      height: 19px;
+      flex-shrink: 0;
+      accent-color: #578d72;
     }
     li span {
       flex: 1;
+      min-width: 0;
       overflow-wrap: anywhere;
     }
-    #error {
-      color: #d44;
-      white-space: pre-wrap;
+    li button {
+      background: transparent;
+      font-size: 0.85rem;
+      padding: 6px 10px;
+    }
+    details {
+      margin-top: 28px;
+      border-top: 1px solid light-dark(#d6dde0, #344047);
+      padding-top: 18px;
+      color: light-dark(#52616a, #acbac2);
+      font-size: 0.9rem;
+    }
+    summary {
+      cursor: pointer;
+    }
+    @media (max-width: 480px) {
+      body {
+        padding: 24px 18px;
+      }
+      .composer {
+        padding: 18px;
+      }
+      form {
+        gap: 10px;
+      }
+      button {
+        padding: 9px 12px;
+      }
+      li {
+        gap: 10px;
+        padding: 12px;
+      }
     }
     </style>
   </head>
   <body>
+    <nav class="demo-nav" aria-label="Демонстрации">
+      <a href="/">Все демо</a>
+      <a href="/examples/documents/" aria-current="page">Задачи</a>
+      <a href="/examples/web/">Настройки</a>
+      <a href="/examples/opfs/">Байтовая база</a>
+    </nav>
     <h1>Задачи с Hoke</h1>
-    <p>Задачи сохраняются в этом браузере и остаются после перезагрузки страницы.</p>
-    <form id="add-form">
-      <label for="task-text">Новая задача</label>
-      <input id="task-text" maxlength="500" required autocomplete="off" disabled>
-      <button id="add" type="submit" disabled>Добавить</button>
-    </form>
-    <p><button id="samples" type="button" disabled>Добавить две задачи атомарно</button></p>
+    <p class="intro">Задачи сохраняются в этом браузере и остаются после перезагрузки страницы.</p>
+    <div class="composer">
+      <form id="add-form">
+        <label for="task-text">Новая задача</label>
+        <input id="task-text" maxlength="500" required autocomplete="off" disabled>
+        <button id="add" type="submit" disabled>Добавить</button>
+      </form>
+      <p class="samples">
+        <button id="samples" type="button" disabled>Добавить две задачи атомарно</button>
+      </p>
+    </div>
     <p id="status" role="status">Открываем базу…</p>
     <p id="error" role="alert"></p>
     <p id="empty" hidden>Пока задач нет.</p>
     <ul id="tasks" aria-label="Задачи"></ul>
-    <p>Показаны первые 1000 задач по ключу. Подписка обновляет список в этом подключении.</p>
-    <p>
-      Экспериментальная библиотека: браузер может удалить данные сайта. Не храните здесь
-      единственную копию важных данных.
-    </p>
+    <details>
+      <summary>О демо</summary>
+      <p>Показаны первые 1000 задач по ключу. Подписка обновляет список в этом подключении.</p>
+      <p>
+        Экспериментальная библиотека: браузер может удалить данные сайта. Не храните здесь
+        единственную копию важных данных.
+      </p>
+    </details>
     <script type="module">
     import { openDatabase } from "../../packages/hoke/dist/db/index.js";
 
