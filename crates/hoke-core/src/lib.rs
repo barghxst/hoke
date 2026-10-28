@@ -34,3 +34,5 @@ pub use native_directory::NativeDirectory;
 pub use options::DatabaseOptions;
 pub use scan::{KeyValue, ScanOptions};
 pub use sstable::SstError;
+
+pub use container::{ContainerDatabase, ContainerDbError, ContainerStats};

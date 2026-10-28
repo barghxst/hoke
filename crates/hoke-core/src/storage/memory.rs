@@ -17,6 +17,11 @@ impl MemoryStorage {
         Self::default()
     }
 
+    /// Consume the volatile store without copying its bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data
+    }
+
     fn resize(&mut self, len: usize) -> io::Result<()> {
         if len > self.data.len() {
             // Reserve before resize so allocation/capacity failures become an

@@ -153,9 +153,9 @@ pub(crate) fn scan_sources<S: Storage>(
 }
 
 // Share the ordering/version resolution without materialising compaction values.
-pub(crate) fn visit_sources<S: Storage>(
-    wal: &Engine<S>,
-    tables: &mut [SSTable<S>],
+pub(crate) fn visit_sources<W: Storage, T: Storage>(
+    wal: &Engine<W>,
+    tables: &mut [SSTable<T>],
     mut options: ScanOptions,
     mut visit: impl FnMut(Vec<u8>, Vec<u8>) -> Result<(), DbError>,
 ) -> Result<(), DbError> {

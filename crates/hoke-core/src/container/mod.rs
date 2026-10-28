@@ -4,11 +4,14 @@ use std::{fmt, io};
 
 use crate::storage::Storage;
 pub(crate) mod codec;
+mod database;
+pub(crate) mod storage;
 pub use codec::{
     CodecError, MAX_FILE_BYTES, MAX_PENDING_SEGMENTS, MAX_ROOT_REFS, MAX_SEGMENT_BYTES, REF_LEN,
     Root, SegmentKind, SegmentRef, decode_ref, decode_root, encode_ref, encode_root,
 };
 use codec::{FILE_HEADER_LEN, RECORD_HEADER_LEN, RecordHeader, RecordKind, TRAILER_LEN};
+pub use database::{ContainerDatabase, ContainerDbError, ContainerStats};
 
 #[derive(Debug)]
 pub enum JournalError {
@@ -64,6 +67,7 @@ pub struct Journal<S: Storage> {
     known: BTreeMap<u64, SegmentRef>,
     pending: usize,
     poisoned: bool,
+    tail_pending: bool,
     recovery: JournalRecovery,
 }
 fn io_error(operation: &'static str) -> impl FnOnce(io::Error) -> JournalError {
@@ -151,7 +155,15 @@ fn checksum<S: Storage>(
     Ok(())
 }
 impl<S: Storage> Journal<S> {
-    pub fn open(mut storage: S) -> Result<Self, JournalError> {
+    pub fn open(storage: S) -> Result<Self, JournalError> {
+        let mut journal = Self::open_deferred(storage)?;
+        journal.repair_tail()?;
+        Ok(journal)
+    }
+
+    /// Validate the outer journal without repairing its incomplete EOF tail.
+    /// Callers may validate immutable payloads before explicitly enabling writes.
+    pub fn open_deferred(mut storage: S) -> Result<Self, JournalError> {
         let length = storage.len().map_err(io_error("container length"))?;
         if length > MAX_FILE_BYTES {
             return Err(JournalError::Limit("file bytes"));
@@ -177,6 +189,7 @@ impl<S: Storage> Journal<S> {
             known: BTreeMap::new(),
             pending: 0,
             poisoned: false,
+            tail_pending: false,
             recovery: JournalRecovery::default(),
         };
         while journal.end < length {
@@ -227,13 +240,27 @@ impl<S: Storage> Journal<S> {
         }
         if length > journal.end {
             journal.recovery.discarded_tail_bytes = length - journal.end;
-            journal
-                .storage
-                .set_len(journal.end)
-                .map_err(io_error("truncate container tail"))?;
-            sync(&mut journal.storage)?;
+            journal.tail_pending = true;
         }
         Ok(journal)
+    }
+    /// Repair only a validated outer incomplete tail; failures poison this handle.
+    pub fn repair_tail(&mut self) -> Result<(), JournalError> {
+        self.readable()?;
+        if !self.tail_pending {
+            return Ok(());
+        }
+        let result = self
+            .storage
+            .set_len(self.end)
+            .map_err(io_error("truncate container tail"))
+            .and_then(|()| sync(&mut self.storage));
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result?;
+        self.tail_pending = false;
+        Ok(())
     }
     fn next_sequence(&self) -> Result<u64, JournalError> {
         self.sequence
@@ -247,12 +274,21 @@ impl<S: Storage> Journal<S> {
             .checked_add(1)
             .ok_or(JournalError::Limit("root generation"))
     }
-    fn writable(&self) -> Result<(), JournalError> {
+    fn readable(&self) -> Result<(), JournalError> {
         if self.poisoned {
             Err(JournalError::Poisoned)
         } else {
             Ok(())
         }
+    }
+    fn writable(&self) -> Result<(), JournalError> {
+        self.readable()?;
+        if self.tail_pending {
+            return Err(JournalError::Corruption(
+                "incomplete tail requires explicit repair",
+            ));
+        }
+        Ok(())
     }
     fn validate_root(&self, root: &Root) -> Result<(), JournalError> {
         if root.generation != self.next_generation()? {
@@ -370,7 +406,7 @@ impl<S: Storage> Journal<S> {
         Ok(())
     }
     pub fn read_segment(&mut self, reference: &SegmentRef) -> Result<Vec<u8>, JournalError> {
-        self.writable()?;
+        self.readable()?;
         if self.known.get(&reference.offset) != Some(reference) {
             return Err(JournalError::Corruption("unknown segment reference"));
         }
@@ -415,5 +451,85 @@ impl<S: Storage> Journal<S> {
     }
     pub fn into_storage(self) -> S {
         self.storage
+    }
+}
+
+#[cfg(test)]
+mod deferred_tests {
+    use super::*;
+    use crate::storage::MemoryStorage;
+
+    #[test]
+    fn validates_payload_before_explicit_tail_repair_and_blocks_writes() {
+        let mut journal = Journal::open(MemoryStorage::new()).unwrap();
+        let reference = journal.append_segment(SegmentKind::Wal, b"known").unwrap();
+        journal.commit(&[], &[reference]).unwrap();
+        let mut storage = journal.into_storage();
+        let length = storage.len().unwrap();
+        storage.write_all_at(length, &[1, 2, 3]).unwrap();
+        let mut journal = Journal::open_deferred(storage).unwrap();
+        assert_eq!(journal.storage.len().unwrap(), length + 3);
+        assert_eq!(journal.read_segment(&reference).unwrap(), b"known");
+        assert!(
+            journal
+                .append_segment(SegmentKind::Wal, b"blocked")
+                .is_err()
+        );
+        assert!(journal.commit(&[], &[]).is_err());
+        assert!(!journal.is_poisoned());
+        assert_eq!(journal.storage.len().unwrap(), length + 3);
+        journal.repair_tail().unwrap();
+        assert_eq!(journal.storage.len().unwrap(), length);
+        assert_eq!(journal.recovery().discarded_tail_bytes, 3);
+        journal.repair_tail().unwrap();
+        journal.commit(&[], &[reference]).unwrap();
+        assert_eq!(journal.root().unwrap().generation, 2);
+    }
+
+    struct FailRepair {
+        inner: MemoryStorage,
+        fail_sync: bool,
+    }
+    impl Storage for FailRepair {
+        fn len(&self) -> io::Result<u64> {
+            self.inner.len()
+        }
+        fn read_at(&mut self, offset: u64, bytes: &mut [u8]) -> io::Result<usize> {
+            self.inner.read_at(offset, bytes)
+        }
+        fn write_all_at(&mut self, offset: u64, bytes: &[u8]) -> io::Result<()> {
+            self.inner.write_all_at(offset, bytes)
+        }
+        fn set_len(&mut self, length: u64) -> io::Result<()> {
+            if !self.fail_sync {
+                return Err(io::Error::other("truncate failed"));
+            }
+            self.inner.set_len(length)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+        fn sync_all(&mut self) -> io::Result<()> {
+            Err(io::Error::other("sync failed"))
+        }
+    }
+    #[test]
+    fn failed_tail_truncate_or_sync_poison_the_journal() {
+        for fail_sync in [false, true] {
+            let journal = Journal::open(MemoryStorage::new()).unwrap();
+            let mut inner = journal.into_storage();
+            inner.write_all_at(FILE_HEADER_LEN as u64, b"tail").unwrap();
+            let mut journal = Journal::open_deferred(FailRepair { inner, fail_sync }).unwrap();
+            assert!(matches!(
+                journal.repair_tail(),
+                Err(JournalError::Io { .. })
+            ));
+            assert!(journal.is_poisoned());
+            assert!(matches!(
+                journal.commit(&[], &[]),
+                Err(JournalError::Poisoned)
+            ));
+            assert!(matches!(journal.repair_tail(), Err(JournalError::Poisoned)));
+        }
     }
 }

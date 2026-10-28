@@ -261,7 +261,7 @@ impl<S: Storage> Engine<S> {
     ) -> Result<Vec<crate::KeyValue>, crate::DbError> {
         let mut result = Vec::new();
         let mut bytes = 0_usize;
-        crate::scan::visit_sources(self, &mut [], options, |key, value| {
+        crate::scan::visit_sources::<S, S>(self, &mut [], options, |key, value| {
             bytes = bytes
                 .checked_add(key.len())
                 .and_then(|total| total.checked_add(value.len()))
@@ -424,10 +424,43 @@ impl<S: Storage> Engine<S> {
     }
 }
 
+impl Engine<crate::storage::MemoryStorage> {
+    /// Apply state already published by a different durable coordinator.
+    /// The volatile WAL remains its initial header and never acknowledges writes.
+    pub(crate) fn apply_committed(&mut self, operation: Operation) {
+        apply(
+            &mut self.values,
+            &mut self.deleted,
+            &mut self.change_bytes,
+            operation,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::MemoryStorage;
+
+    #[test]
+    fn derived_committed_changes_never_grow_volatile_wal() {
+        let mut engine = Engine::open(MemoryStorage::new()).unwrap();
+        for i in 0..100 {
+            engine.apply_committed(Operation::Put {
+                key: b"key".to_vec(),
+                value: vec![i; 100],
+            });
+        }
+        engine.apply_committed(Operation::Delete {
+            key: b"key".to_vec(),
+        });
+        assert_eq!(engine.lookup_change(b"key"), Some(None));
+        assert_eq!(engine.change_bytes(), 3);
+        assert_eq!(engine.change_count(), 1);
+        assert_eq!(engine.byte_len(), wal::FILE_HEADER_LEN as u64);
+        assert_eq!(engine.storage.len().unwrap(), wal::FILE_HEADER_LEN as u64);
+        assert_eq!(engine.recovery().records_replayed, 0);
+    }
 
     #[test]
     fn payload_bytes_track_binary_empty_overwrites_and_tombstones() {
