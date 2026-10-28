@@ -30,6 +30,7 @@ try {
   assert(contents.includes("package/dist/db/scan-packet.js"));
   assert(contents.includes("package/dist/db/wasm-init.js"));
   assert(contents.includes("package/dist/db/container-journal.js"));
+  assert(contents.includes("package/dist/db/container-db.js"));
   assert(contents.includes("package/wasm/hoke_wasm.js"));
   assert(contents.includes("package/wasm/hoke_wasm_bg.wasm"));
   assert(!/\.test\.|node_modules\/|package\/src\//.test(contents), "Unexpected files in tarball");
