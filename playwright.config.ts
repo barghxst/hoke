@@ -22,8 +22,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `python3 -m http.server ${port} --bind 127.0.0.1`,
-    url: `${baseURL}/examples/web/`,
+    command: `node scripts/demo.mjs --no-build --no-open --port ${port} --strict-port`,
+    url: `${baseURL}/`,
     reuseExistingServer: false,
     timeout: 15_000,
     stdout: "ignore",

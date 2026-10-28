@@ -11,8 +11,8 @@
     "format": "biome format --write .",
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write --error-on-warnings .",
-    "demo": "pnpm build && python3 -m http.server 8000 --bind 127.0.0.1",
-    "check:js": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm test:wasm && pnpm test:package",
+    "demo": "node scripts/demo.mjs",
+    "check:js": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm test:wasm && pnpm test:package && pnpm test:demo",
     "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
     "format:rust": "cargo fmt --all",
     "bench": "python3 scripts/bench.py",
@@ -20,7 +20,8 @@
     "test:browser": "pnpm build && playwright test",
     "check:all": "pnpm check && pnpm test:browser",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "test:wasm": "node scripts/test-wasm.mjs"
+    "test:wasm": "node scripts/test-wasm.mjs",
+    "test:demo": "node --test scripts/demo/*.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",

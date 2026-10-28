@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hoke — демо</title>
+    <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, sans-serif;
+      line-height: 1.6;
+      background: light-dark(#f6f7f9, #111416);
+      color: light-dark(#182127, #e8edf0);
+    }
+    body {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+    header {
+      max-width: 720px;
+      margin-bottom: 36px;
+    }
+    .eyebrow {
+      color: light-dark(#365f53, #8fcdb5);
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      line-height: 1.15;
+      margin: 12px 0 20px;
+    }
+    h2 {
+      margin-top: 0;
+      line-height: 1.3;
+    }
+    p {
+      margin: 12px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+    article {
+      border: 1px solid light-dark(#d6dde0, #344047);
+      border-radius: 16px;
+      padding: 28px;
+      background: light-dark(#fff, #1a2024);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    article.featured {
+      grid-column: 1 / -1;
+      border-color: light-dark(#709c89, #648d7c);
+      background: light-dark(#edf5f0, #1b2c25);
+    }
+    .tag {
+      font-size: 0.85rem;
+      color: light-dark(#4b6158, #b0c9bd);
+      margin: 0 0 12px;
+    }
+    article p {
+      margin-top: 0;
+    }
+    a {
+      color: light-dark(#125d43, #a0e1c4);
+      text-underline-offset: 4px;
+    }
+    .action {
+      margin-top: auto;
+      padding-top: 16px;
+      font-weight: 650;
+    }
+    a:focus-visible {
+      outline: 3px solid currentColor;
+      outline-offset: 5px;
+      border-radius: 2px;
+    }
+    footer {
+      margin-top: 32px;
+      color: light-dark(#52616a, #acbac2);
+      font-size: 0.95rem;
+    }
+    @media (max-width: 620px) {
+      body {
+        padding: 28px 18px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      article {
+        padding: 22px;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <header>
+      <p class="eyebrow">Hoke · интерактивные примеры</p>
+      <h1>Данные остаются в браузере.</h1>
+      <p>
+        Hoke — библиотека локального хранения. Попробуйте обычное приложение, настройки с миграциями
+        или низкоуровневую базу на Rust и WASM.
+      </p>
+    </header>
+    <main class="grid" aria-label="Демонстрации Hoke">
+      <article class="featured">
+        <p class="tag">Начните здесь · объекты и коллекции</p>
+        <h2>Список задач</h2>
+        <p>
+          Добавляйте задачи, отмечайте выполненные и перезагружайте страницу. Объекты сохраняются в
+          базе; две задачи можно записать одной атомарной операцией.
+        </p>
+        <a class="action" href="/examples/documents/">Открыть список задач →</a>
+      </article>
+      <article>
+        <p class="tag">KV · localStorage</p>
+        <h2>Настройки и миграции</h2>
+        <p>
+          Тема, счётчик и сохранённая JSON-запись. Создайте данные старой версии и запустите
+          миграцию отдельным действием.
+        </p>
+        <a class="action" href="/examples/web/">Открыть настройки →</a>
+      </article>
+      <article>
+        <p class="tag">Для изучения движка · Rust / WASM / OPFS</p>
+        <h2>Байтовая база</h2>
+        <p>
+          Читайте и записывайте ключи, проверяйте batch и подписки. В контейнерном режиме доступны
+          flush, compaction и состояние базы.
+        </p>
+        <a class="action" href="/examples/opfs/">Открыть базу →</a>
+      </article>
+    </main>
+    <footer>
+      <p>
+        У каждого примера свои данные. Сохранение проверяется перезагрузкой того же адреса. Для
+        списка задач и байтовой базы нужен браузер с OPFS и SyncAccessHandle.
+      </p>
+      <p>
+        Это экспериментальные примеры: браузер может удалить данные сайта. Не храните здесь
+        единственную копию важных данных.
+      </p>
+    </footer>
+  </body>
+</html>
