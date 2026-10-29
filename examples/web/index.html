@@ -118,10 +118,10 @@
     </section>
     <script type="module">
     import {
-      createKV,
-      createLocalStorage,
       createStore,
       defineStore,
+      KV,
+      LocalStorageBackend,
     } from "../../packages/hoke/dist/kv/index.js";
 
     const element = (id) => document.getElementById(id);
@@ -246,14 +246,14 @@
       attempt(() => {
         unsubscribe();
         // Explicit recovery also removes malformed JSON without reading it first.
-        storage.remove("settings");
+        storage.remove('stowtree:["store-demo","settings"]');
         open();
         element("status").textContent = "Запись удалена. Используются defaults без записи на диск.";
       }),
     );
     attempt(() => {
-      storage = createLocalStorage({ name: "store-demo", validate: (value) => true });
-      kv = createKV({ storage });
+      storage = new LocalStorageBackend();
+      kv = new KV({ name: "store-demo", backend: storage });
       scenarios.forEach((control) => {
         control.disabled = false;
       });

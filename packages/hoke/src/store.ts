@@ -1,4 +1,4 @@
-import type { KV } from "./kv/index.js";
+import type { KVSource } from "./kv/backend.js";
 import { isThenable } from "./sync-result.js";
 
 export type StoreErrorCode =
@@ -151,7 +151,7 @@ function envelope(raw: unknown, key: string): StoreEnvelope {
   return raw as StoreEnvelope;
 }
 
-export function createStore<T>(kv: KV<unknown>, input: StoreDefinition<T>): Store<T> {
+export function createStore<T>(kv: KVSource<unknown>, input: StoreDefinition<T>): Store<T> {
   const definition = defineStore(input);
   let defaults: T;
   try {

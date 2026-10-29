@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { StringStorage } from "./index.js";
-import { createKV, createLocalStorage, KVStorageError } from "./index.js";
+import type { StringStorage } from "../../src/kv/index.js";
+import { KV, KVStorageError, LocalStorageBackend } from "../../src/kv/index.js";
+import { MemoryBackend } from "../helpers/memory-backend.js";
 
 function fakeStorage() {
   const data = new Map<string, string>();
@@ -19,7 +20,7 @@ function fakeStorage() {
 const isNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 function open(storage: StringStorage, name = "app") {
-  return createKV({ storage: createLocalStorage({ name, storage, validate: isNumber }) });
+  return new KV({ name, backend: new LocalStorageBackend({ storage }), validate: isNumber });
 }
 
 function expectCode(action: () => unknown, code: string, cause?: unknown) {
@@ -81,7 +82,7 @@ describe("localStorage adapter", () => {
         Array.isArray(value.items) &&
         value.items.every((item: unknown) => item === null || typeof item === "string"));
     const storage = fakeStorage();
-    const kv = createKV({ storage: createLocalStorage({ name: "objects", storage, validate }) });
+    const kv = new KV({ name: "objects", backend: new LocalStorageBackend({ storage }), validate });
     const value = { items: ["hello", null] };
     kv.set("key", value);
     value.items.push("outside");
@@ -174,9 +175,7 @@ describe("localStorage adapter", () => {
     },
   ])("rejects values that JSON would lose or alter: %s", (value) => {
     const storage = fakeStorage();
-    const kv = createKV({
-      storage: createLocalStorage({ name: "json", storage, validate: (v): v is unknown => true }),
-    });
+    const kv = new KV({ name: "json", backend: new LocalStorageBackend({ storage }) });
     const listener = vi.fn();
     kv.subscribe("key", listener);
     expectCode(() => kv.set("key", value), "INVALID_VALUE");
@@ -186,9 +185,7 @@ describe("localStorage adapter", () => {
 
   it("rejects cycles but accepts repeated references as independent JSON objects", () => {
     const storage = fakeStorage();
-    const kv = createKV({
-      storage: createLocalStorage({ name: "json", storage, validate: (v): v is unknown => true }),
-    });
+    const kv = new KV({ name: "json", backend: new LocalStorageBackend({ storage }) });
     const cycle: Record<string, unknown> = {};
     cycle.self = cycle;
     expectCode(() => kv.set("key", cycle), "INVALID_VALUE");
@@ -206,15 +203,15 @@ describe("localStorage adapter", () => {
   it("uses browser localStorage when no storage override is supplied", () => {
     const storage = fakeStorage();
     vi.stubGlobal("localStorage", storage);
-    const kv = createKV({ storage: createLocalStorage({ name: "browser", validate: isNumber }) });
+    const kv = new KV({ name: "browser", validate: isNumber });
     kv.set("key", 1);
     expect(storage.setItem).toHaveBeenCalledTimes(1);
   });
 
   it("fails explicitly when localStorage is unavailable; memory still works", () => {
     vi.stubGlobal("localStorage", undefined);
-    expectCode(() => createLocalStorage({ name: "browser", validate: isNumber }), "UNAVAILABLE");
-    const kv = createKV<number>();
+    expectCode(() => new KV({ name: "browser", validate: isNumber }), "UNAVAILABLE");
+    const kv = new KV<number>({ name: "memory", backend: new MemoryBackend() });
     kv.set("key", 1);
     expect(kv.get("key")).toBe(1);
   });
@@ -229,11 +226,7 @@ describe("localStorage adapter", () => {
       },
     });
     try {
-      expectCode(
-        () => createLocalStorage({ name: "browser", validate: isNumber }),
-        "UNAVAILABLE",
-        failure,
-      );
+      expectCode(() => new KV({ name: "browser", validate: isNumber }), "UNAVAILABLE", failure);
     } finally {
       if (original) Object.defineProperty(globalThis, "localStorage", original);
       else Reflect.deleteProperty(globalThis, "localStorage");
@@ -241,8 +234,13 @@ describe("localStorage adapter", () => {
   });
 
   it("rejects an empty namespace", () => {
-    expect(() =>
-      createLocalStorage({ name: "", storage: fakeStorage(), validate: isNumber }),
+    expect(
+      () =>
+        new KV({
+          name: "",
+          backend: new LocalStorageBackend({ storage: fakeStorage() }),
+          validate: isNumber,
+        }),
     ).toThrow(TypeError);
   });
 });
@@ -254,155 +252,196 @@ describe("localStorage snapshots", () => {
   const persistedKey = 'stowtree:["snapshots","key"]';
   function setup() {
     const storage = fakeStorage();
-    const adapter = createLocalStorage({ name: "snapshots", storage, validate });
-    adapter.write("key", { count: 1 });
+    const adapter = new KV({
+      name: "snapshots",
+      backend: new LocalStorageBackend({ storage }),
+      validate,
+    });
+    adapter.set("key", { count: 1 });
     return { storage, adapter };
   }
 
   it("reuses object values and entries while still reading the backend each time", () => {
     const { storage, adapter } = setup();
-    const first = adapter.read("key")!;
-    expect(adapter.read("key")).toBe(first);
-    expect(adapter.read("key")!.value).toBe(first.value);
-    const kv = createKV({ storage: adapter });
-    expect(kv.get("key")).toBe(first.value);
-    expect(kv.get("key")).toBe(first.value);
-    expect(storage.getItem).toHaveBeenCalledTimes(5);
+    const first = adapter.get("key")!;
+    expect(adapter.get("key")).toBe(first);
+    expect(adapter.get("key")!).toBe(first);
+    const kv = adapter;
+    expect(kv.get("key")).toBe(first);
+    expect(kv.get("key")).toBe(first);
+    expect(storage.getItem).toHaveBeenCalledTimes(6);
   });
 
   it("detects external raw changes, including equivalent JSON with different formatting", () => {
     const { storage, adapter } = setup();
-    const first = adapter.read("key")!;
+    const first = adapter.get("key")!;
     storage.data.set(persistedKey, '{ "count": 1 }');
-    const reformatted = adapter.read("key")!;
-    expect(reformatted.value).toEqual(first.value);
+    const reformatted = adapter.get("key")!;
+    expect(reformatted).toEqual(first);
     expect(reformatted).not.toBe(first);
-    expect(adapter.read("key")).toBe(reformatted);
+    expect(adapter.get("key")).toBe(reformatted);
     storage.data.set(persistedKey, '{"count":2}');
-    const changed = adapter.read("key")!;
-    expect(changed.value).toEqual({ count: 2 });
-    expect(changed.value).not.toBe(reformatted.value);
+    const changed = adapter.get("key")!;
+    expect(changed).toEqual({ count: 2 });
+    expect(changed).not.toBe(reformatted);
   });
 
   it.each(["{broken", '{"count":"invalid"}'])(
     "throws on corrupted data and recovers after restoration: %s",
     (raw) => {
       const { storage, adapter } = setup();
-      adapter.read("key");
+      adapter.get("key");
       storage.data.set(persistedKey, raw);
-      expectCode(() => adapter.read("key"), "INVALID_DATA");
-      expectCode(() => adapter.read("key"), "INVALID_DATA");
+      expectCode(() => adapter.get("key"), "INVALID_DATA");
+      expectCode(() => adapter.get("key"), "INVALID_DATA");
       storage.data.set(persistedKey, '{"count":1}');
-      const restored = adapter.read("key")!;
-      expect(restored.value).toEqual({ count: 1 });
-      expect(adapter.read("key")).toBe(restored);
+      const restored = adapter.get("key")!;
+      expect(restored).toEqual({ count: 1 });
+      expect(adapter.get("key")).toBe(restored);
     },
   );
 
   it("throws on backend read failure and reads fresh data after recovery", () => {
     const { storage, adapter } = setup();
-    adapter.read("key");
+    adapter.get("key");
     const failure = new Error("temporarily unavailable");
     storage.getItem.mockImplementationOnce(() => {
       throw failure;
     });
-    expectCode(() => adapter.read("key"), "READ_FAILED", failure);
+    expectCode(() => adapter.get("key"), "READ_FAILED", failure);
     storage.data.set(persistedKey, '{"count":2}');
-    const recovered = adapter.read("key")!;
-    expect(recovered.value).toEqual({ count: 2 });
-    expect(adapter.read("key")).toBe(recovered);
+    const recovered = adapter.get("key")!;
+    expect(recovered).toEqual({ count: 2 });
+    expect(adapter.get("key")).toBe(recovered);
   });
 
   it("runs changing validators even for cached values", () => {
     const storage = fakeStorage();
     let accepted = true;
     const check = vi.fn((value: unknown): value is Value => accepted && validate(value));
-    const adapter = createLocalStorage({
+    const adapter = new KV({
       name: "snapshots",
-      storage,
+      backend: new LocalStorageBackend({ storage }),
       validate: (value: unknown): value is Value => check(value),
     });
-    adapter.write("key", { count: 1 });
-    adapter.read("key");
+    adapter.set("key", { count: 1 });
+    adapter.get("key");
     accepted = false;
-    expectCode(() => adapter.read("key"), "INVALID_DATA");
+    expectCode(() => adapter.get("key"), "INVALID_DATA");
     accepted = true;
-    const recovered = adapter.read("key")!;
-    expect(adapter.read("key")).toBe(recovered);
+    const recovered = adapter.get("key")!;
+    expect(adapter.get("key")).toBe(recovered);
     expect(check).toHaveBeenCalledTimes(5);
     const failure = new Error("validator failed");
     check.mockImplementationOnce(() => {
       throw failure;
     });
-    expectCode(() => adapter.read("key"), "INVALID_DATA", failure);
+    expectCode(() => adapter.get("key"), "INVALID_DATA", failure);
   });
 
   it("retains the previous snapshot after failed or invalid writes and failed removal", () => {
     const { storage, adapter } = setup();
-    const first = adapter.read("key")!;
+    const first = adapter.get("key")!;
     const failure = new Error("quota exceeded");
     storage.setItem.mockImplementationOnce(() => {
       throw failure;
     });
-    expectCode(() => adapter.write("key", { count: 2 }), "WRITE_FAILED", failure);
-    expect(adapter.read("key")).toBe(first);
-    expectCode(() => adapter.write("key", { count: "bad" } as unknown as Value), "INVALID_VALUE");
-    expect(adapter.read("key")).toBe(first);
+    expectCode(() => adapter.set("key", { count: 2 }), "WRITE_FAILED", failure);
+    expect(adapter.get("key")).toBe(first);
+    expectCode(() => adapter.set("key", { count: "bad" } as unknown as Value), "INVALID_VALUE");
+    expect(adapter.get("key")).toBe(first);
     storage.removeItem.mockImplementationOnce(() => {
       throw failure;
     });
-    expectCode(() => adapter.remove("key"), "DELETE_FAILED", failure);
-    expect(adapter.read("key")).toBe(first);
+    expectCode(() => adapter.delete("key"), "DELETE_FAILED", failure);
+    expect(adapter.get("key")).toBe(first);
   });
 
   it("reuses a snapshot after writing the same raw JSON without retaining input references", () => {
     const { adapter } = setup();
-    const first = adapter.read("key")!;
-    adapter.write("key", { count: 1 });
-    expect(adapter.read("key")).toBe(first);
+    const first = adapter.get("key")!;
+    adapter.set("key", { count: 1 });
+    expect(adapter.get("key")).toBe(first);
     const next = { count: 2 };
-    adapter.write("key", next);
+    adapter.set("key", next);
     next.count = 3;
-    const second = adapter.read("key")!;
-    expect(second.value).toEqual({ count: 2 });
-    expect(second.value).not.toBe(next);
+    const second = adapter.get("key")!;
+    expect(second).toEqual({ count: 2 });
+    expect(second).not.toBe(next);
     expect(second).not.toBe(first);
-    expect(adapter.read("key")).toBe(second);
+    expect(adapter.get("key")).toBe(second);
   });
 
   it("invalidates a removed key even if it is recreated with identical JSON before reading", () => {
     const { adapter } = setup();
-    const first = adapter.read("key")!;
-    adapter.remove("key");
-    adapter.write("key", { count: 1 });
-    expect(adapter.read("key")).not.toBe(first);
-    adapter.remove("key");
-    expect(adapter.read("key")).toBeUndefined();
-    adapter.write("key", { count: 2 });
-    expect(adapter.read("key")!.value).toEqual({ count: 2 });
+    const first = adapter.get("key")!;
+    adapter.delete("key");
+    adapter.set("key", { count: 1 });
+    expect(adapter.get("key")).not.toBe(first);
+    adapter.delete("key");
+    expect(adapter.get("key")).toBeUndefined();
+    adapter.set("key", { count: 2 });
+    expect(adapter.get("key")!).toEqual({ count: 2 });
   });
 
   it("detects external deletion and recreates a snapshot after the key returns", () => {
     const { storage, adapter } = setup();
-    const first = adapter.read("key")!;
+    const first = adapter.get("key")!;
     storage.data.delete(persistedKey);
-    expect(adapter.read("key")).toBeUndefined();
+    expect(adapter.get("key")).toBeUndefined();
     storage.data.set(persistedKey, '{"count":1}');
-    expect(adapter.read("key")!.value).toEqual(first.value);
-    expect(adapter.read("key")).not.toBe(first);
+    expect(adapter.get("key")!).toEqual(first);
+    expect(adapter.get("key")).not.toBe(first);
   });
 
   it("keeps independent snapshots for different keys and adapter namespaces", () => {
     const { storage, adapter } = setup();
-    const other = createLocalStorage({ name: "other", storage, validate });
-    adapter.write("other", { count: 2 });
-    other.write("key", { count: 3 });
-    const first = adapter.read("key")!;
-    const second = adapter.read("other")!;
-    const third = other.read("key")!;
-    expect([first.value.count, second.value.count, third.value.count]).toEqual([1, 2, 3]);
-    expect(adapter.read("key")).toBe(first);
-    expect(adapter.read("other")).toBe(second);
-    expect(other.read("key")).toBe(third);
+    const other = new KV({
+      name: "other",
+      backend: new LocalStorageBackend({ storage }),
+      validate,
+    });
+    adapter.set("other", { count: 2 });
+    other.set("key", { count: 3 });
+    const first = adapter.get("key")!;
+    const second = adapter.get("other")!;
+    const third = other.get("key")!;
+    expect([first.count, second.count, third.count]).toEqual([1, 2, 3]);
+    expect(adapter.get("key")).toBe(first);
+    expect(adapter.get("other")).toBe(second);
+    expect(other.get("key")).toBe(third);
   });
+});
+
+it("rejects async injected storage mutations directly and through KV", async () => {
+  const storage = fakeStorage();
+  const backend = new LocalStorageBackend({ storage });
+  const kv = new KV({ name: "async-storage", backend });
+  kv.set("key", 1);
+  const listener = vi.fn();
+  kv.subscribe("key", listener);
+  storage.setItem.mockImplementation((async () => {
+    throw new Error("async injected write");
+  }) as never);
+  expect(() => backend.write("direct", "1")).toThrow(TypeError);
+  expectCode(() => kv.set("key", 2), "WRITE_FAILED");
+  storage.removeItem.mockImplementation((async () => {
+    throw new Error("async injected delete");
+  }) as never);
+  expect(() => backend.remove("direct")).toThrow(TypeError);
+  expectCode(() => kv.delete("key"), "DELETE_FAILED");
+  expect(kv.get("key")).toBe(1);
+  expect(listener).not.toHaveBeenCalled();
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+it("rejects async injected storage reads and observes rejected promises", async () => {
+  const storage = fakeStorage();
+  storage.getItem.mockImplementation((() =>
+    Promise.reject(new Error("async injected read"))) as never);
+  const backend = new LocalStorageBackend({ storage });
+  const kv = new KV({ name: "async-storage", backend });
+  expect(() => backend.read("direct")).toThrow(TypeError);
+  expectCode(() => kv.get("key"), "READ_FAILED");
+  await new Promise((resolve) => setImmediate(resolve));
 });

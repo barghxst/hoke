@@ -23,6 +23,9 @@ try {
   assert(archive, "pnpm pack did not produce a tarball");
   const contents = run("tar", ["-tzf", join(directory, archive)]);
   assert(contents.includes("package/dist/kv/index.d.ts"));
+  assert(contents.includes("package/dist/kv/web/index.js"));
+  assert(contents.includes("package/dist/kv/native/index.js"));
+  assert(!contents.includes("package/dist/kv/memory-backend"));
   assert(contents.includes("package/dist/react/index.js"));
   assert(contents.includes("package/dist/db/worker.js"));
   assert(contents.includes("package/dist/db/sst-files.js"));
@@ -52,9 +55,24 @@ try {
     ],
     directory,
   );
+  await writeFile(
+    join(directory, "resolve-native.mjs"),
+    `
+    import assert from 'node:assert/strict';
+    assert(import.meta.resolve('hoke/kv').endsWith('/dist/kv/native/index.js'));
+  `,
+  );
+  run("node", ["--conditions=react-native", "resolve-native.mjs"], directory);
   const consumer = `
     import assert from 'node:assert/strict';
-    import { createKV, createStore, defineStore, createLocalStorage } from 'hoke/kv';
+
+    class TestBackend {
+      entries = new Map();
+      read(key) { return this.entries.get(key); }
+      write(key, value) { this.entries.set(key, value); }
+      remove(key) { this.entries.delete(key); }
+    }
+    import { KV, createStore, defineStore, LocalStorageBackend } from 'hoke/kv';
     import { openDB, openDatabase, DBError, DBNotificationError } from 'hoke/db';
     const subscriberError = new DBNotificationError([new Error('listener')]);
     assert(subscriberError instanceof AggregateError);
@@ -70,8 +88,13 @@ try {
     await assert.rejects(openDB('server', { mode: 'invalid' }), error => error instanceof DBError && error.code === 'INVALID_ARGUMENT');
     await assert.rejects(openDatabase('ssr-pre-aborted', { signal: { aborted: true, addEventListener() {}, removeEventListener() {} } }), error => error.code === 'ABORTED');
     assert.equal(typeof globalThis.window, 'undefined');
+    assert.throws(() => new KV({ name: 'ssr-default' }), error => error.code === 'UNAVAILABLE');
+    const publicKV = await import('hoke/kv');
+    assert.equal(publicKV.MemoryBackend, undefined);
+    assert.equal(publicKV.createKV, undefined);
+    assert.equal(publicKV.createLocalStorage, undefined);
     assert.throws(() => import.meta.resolve('react'), { code: 'ERR_MODULE_NOT_FOUND' });
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new TestBackend() });
     const definition = defineStore({
       key: 'counter', version: 1, defaults: () => 0,
       validate: (value) => typeof value === 'number' && Number.isFinite(value),
@@ -97,9 +120,7 @@ try {
       setItem: (key, value) => { persisted.set(key, value); },
       removeItem: (key) => { persisted.delete(key); },
     };
-    const durableKV = createKV({ storage: createLocalStorage({
-      name: 'rename-compat', storage: backend, validate: () => true,
-    }) });
+    const durableKV = new KV({ name: "rename-compat", backend: new LocalStorageBackend({ storage: backend }) });
     const legacy = createStore(durableKV, definition);
     assert.equal(legacy.getSnapshot(), 41);
     legacy.update((value) => value + 1);
@@ -113,7 +134,14 @@ try {
   await writeFile(
     join(directory, "consumer.ts"),
     `
-    import { createKV, createStore, defineStore } from 'hoke/kv';
+
+    class TestBackend {
+      entries = new Map<string, string>();
+      read(key: string): string | undefined { return this.entries.get(key); }
+      write(key: string, value: string): void { this.entries.set(key, value); }
+      remove(key: string): void { this.entries.delete(key); }
+    }
+    import { KV, createStore, defineStore } from 'hoke/kv';
     import { openDB, openDatabase, DocumentError, type Database, type Collection, DBNotificationError, type DBRange, type DBListener, type BrowserDB, type DBCollection, type DBEntry, type DBAbortSignal, type DBOperationOptions, type DBBatchOperation, type DBStats, type DBMode } from 'hoke/db';
     const signal: DBAbortSignal = {
       aborted: false,
@@ -192,7 +220,7 @@ try {
       validate: (value: unknown): value is { count: number } =>
         typeof value === 'object' && value !== null && 'count' in value && typeof value.count === 'number',
     });
-    const store = createStore(createKV<unknown>(), definition);
+    const store = createStore(new KV<unknown>({ name: "test", backend: new TestBackend() }), definition);
     const count: number = store.getSnapshot().count;
     store.set({ count: count + 1 });
     // @ts-expect-error The store must reject a wrong value type.
@@ -215,6 +243,29 @@ try {
     }),
   );
   run("pnpm", ["exec", "tsc", "-p", join(directory, "tsconfig.json")]);
+  await writeFile(
+    join(directory, "native-consumer.ts"),
+    `
+    import { KV, MMKVBackend, type MMKVInstance, type KVBackend } from 'hoke/kv';
+    declare const instance: MMKVInstance;
+    const backend: KVBackend = new MMKVBackend({ instance });
+    const kv = new KV<string>({ name: 'native-types', backend });
+    kv.set('theme', 'dark');
+    const theme: string | undefined = kv.get('theme');
+    void theme;
+    // @ts-expect-error Platform exports must select the native facade.
+    import { LocalStorageBackend } from 'hoke/kv';
+  `,
+  );
+  await writeFile(
+    join(directory, "tsconfig.native.json"),
+    JSON.stringify({
+      extends: "./tsconfig.json",
+      compilerOptions: { customConditions: ["react-native"] },
+      files: ["native-consumer.ts"],
+    }),
+  );
+  run("pnpm", ["exec", "tsc", "-p", join(directory, "tsconfig.native.json")]);
   const packed = JSON.parse(
     await readFile(join(directory, "node_modules/hoke/package.json"), "utf8"),
   );
@@ -242,8 +293,15 @@ try {
     import { createElement } from 'react';
     import { renderToString } from 'react-dom/server';
     import { useValue, useStore, useDBValue } from 'hoke/react';
-    import { createKV, createStore, defineStore } from 'hoke/kv';
-    const store = createStore(createKV(), defineStore({
+
+    class TestBackend {
+      entries = new Map();
+      read(key) { return this.entries.get(key); }
+      write(key, value) { this.entries.set(key, value); }
+      remove(key) { this.entries.delete(key); }
+    }
+    import { KV, createStore, defineStore } from 'hoke/kv';
+    const store = createStore(new KV({ name: "test", backend: new TestBackend() }), defineStore({
       key: 'ssr', version: 1, defaults: () => 3,
       validate: (value) => typeof value === 'number',
     }));
@@ -258,9 +316,16 @@ try {
   await writeFile(
     join(directory, "consumer.ts"),
     `
-    import { createKV, createStore, defineStore } from 'hoke/kv';
+
+    class TestBackend {
+      entries = new Map<string, string>();
+      read(key: string): string | undefined { return this.entries.get(key); }
+      write(key: string, value: string): void { this.entries.set(key, value); }
+      remove(key: string): void { this.entries.delete(key); }
+    }
+    import { KV, createStore, defineStore } from 'hoke/kv';
     import { useValue, useStore, useDBValue } from 'hoke/react';
-    const store = createStore(createKV<unknown>(), defineStore({
+    const store = createStore(new KV<unknown>({ name: "test", backend: new TestBackend() }), defineStore({
       key: 'react-types', version: 1, defaults: () => ({ count: 0 }),
       validate: (value: unknown): value is { count: number } => typeof value === 'object' && value !== null && 'count' in value && typeof value.count === 'number',
     }));

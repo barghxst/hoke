@@ -1,6 +1,6 @@
-import { createKV } from "hoke/kv";
+import { KV } from "hoke/kv";
 
-const kv = createKV<number>();
+const kv = new KV<number>({ name: "smoke" });
 let observed: number | undefined;
 const unsubscribe = kv.subscribe("count", () => {
   observed = kv.get("count");

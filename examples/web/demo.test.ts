@@ -2,10 +2,10 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createKV,
-  createLocalStorage,
   createStore,
   defineStore,
+  KV,
+  LocalStorageBackend,
 } from "../../packages/hoke/src/kv/index.js";
 
 const html = readFileSync("examples/web/index.html", "utf8");
@@ -13,8 +13,8 @@ const inline = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
 if (!inline) throw new Error("Demo module script missing");
 // Exercise the actual example script with its imports supplied from source.
 const run = new Function(
-  "createKV",
-  "createLocalStorage",
+  "KV",
+  "LocalStorageBackend",
   "createStore",
   "defineStore",
   inline.replace(/^\s*import\s+[\s\S]*?\s+from\s+["'][^"']+["'];?\s*/m, ""),
@@ -24,7 +24,7 @@ const element = (id: string) => document.getElementById(id)!;
 function mount() {
   const page = new DOMParser().parseFromString(html, "text/html");
   document.body.innerHTML = page.body.innerHTML;
-  run(createKV, createLocalStorage, createStore, defineStore);
+  run(KV, LocalStorageBackend, createStore, defineStore);
 }
 function click(id: string) {
   (element(id) as HTMLButtonElement).click();

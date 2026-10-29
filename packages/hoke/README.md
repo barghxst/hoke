@@ -2,14 +2,14 @@
 
 Local storage for applications: TypeScript KV and reactive stores, plus an experimental Rust database through WASM.
 
-This is an unpublished early prototype. Memory and localStorage are implemented. A native Rust database prototype lives in crates/hoke-core; it is not part of this npm package. An experimental hoke/db entry point runs Rust in WASM/Worker/OPFS. Explicit container-v1 supports SST, atomic batches and compaction alongside the default WAL backend. React Native and cross-tab routing remain future work.
+This is an unpublished early prototype. KV defaults to localStorage on web and MMKV in React Native; actual iOS/Android execution has not yet been verified. A native Rust database prototype lives in crates/hoke-core; it is not part of this npm package. An experimental hoke/db entry point runs Rust in WASM/Worker/OPFS. Explicit container-v1 supports SST, atomic batches and compaction alongside the default WAL backend. React Native DB and cross-tab routing remain future work.
 
 For application data, `openDatabase(name)` from `hoke/db` opens typed JSON collections: `db.collection("tasks", { validate: isTask })`, then `set("id", task)`, `get("id")`, `list()` or atomic `writeBatch`. Keys are strings and values are validated immutable JSON snapshots. Logical maintenance runs automatically before writes; no mode choice or manual byte encoding is required. `useDBValue(collection,key)` from `hoke/react` returns loading/success/error and reloads after local commits. The existing byte-level `openDB` API remains available separately.
 
 KV and Store run entirely in TypeScript. Rust is used by `hoke/db`: it owns WAL records, sorted immutable tables, ordered reads and crash recovery. The browser client sends requests to a Dedicated Worker, which runs the shared Rust engine as WebAssembly against an OPFS file. The native CLI uses the same core with ordinary filesystem adapters. The engine uses its own WAL/SST/container formats; it does not embed SQLite or RocksDB.
 
 ```ts
-import { createKV, createStore, defineStore } from "hoke/kv";
+import { KV, createStore, defineStore } from "hoke/kv";
 
 const definition = defineStore({
   key: "counter",
@@ -18,17 +18,17 @@ const definition = defineStore({
   validate: (value: unknown): value is number =>
     typeof value === "number" && Number.isFinite(value),
 });
-const store = createStore(createKV<unknown>(), definition);
+const store = createStore(new KV({ name: "app" }), definition);
 store.update((previous) => previous + 1);
 ```
 
 React is optional for KV. To use hooks, install React 19.3.x and import `useValue` or `useStore` from `hoke/react`.
 
-Use `createLocalStorage({ name, validate })` as the `storage` option of `createKV` for persistence. Validate raw JSON separately from the current store schema so migration inputs can be read. Store migrations are synchronous and keyed by destination version; all steps finish and validate before one final envelope write. Future versions throw instead of downgrading.
+`new KV({ name })` selects the platform backend. Supply `backend` to override it; the synchronous `KVBackend` contract is `read(key): string | undefined`, `write(key, value): void`, and `remove(key): void`. KV owns JSON encoding, namespacing, validation and parsed snapshots. An optional `validate` checks raw values; leave it unset when Store must read older envelopes for migration. `LocalStorageBackend({ storage })` accepts an injected Web Storage implementation on web. MemoryBackend is an internal test helper, not a package export. Secure storage and encryption are not part of this API. Store migrations are synchronous and keyed by destination version; all steps finish and validate before one final envelope write. Future versions throw instead of downgrading.
 
 Snapshots and supplied values must be treated as immutable. Subscriptions apply only to writes through the same KV instance. `getServerSnapshot()` returns stable defaults; server and client defaults must match during hydration. Updates and migrations receive protected structured clones, so their inputs must be cloneable.
 
-ESM exports are hoke/kv, hoke/react and experimental hoke/db. The latter exposes async openDB/get/put/delete/scan/close and byte collections with default mode wal-v1 or explicit container-v1, byte keys/values and one exclusive owner. Node 24 and React 19.3.x are the current tested development environments. The package remains private while licensing, ownership, and release metadata are pending.
+The `hoke/kv` export selects separate web/native facades via the `react-native` condition. Native consumers install `react-native-mmkv` and `react-native-nitro-modules` and build the native app; web imports do not load these peers. ESM exports are hoke/kv, hoke/react and experimental hoke/db. The latter exposes async openDB/get/put/delete/scan/close and byte collections with default mode wal-v1 or explicit container-v1, byte keys/values and one exclusive owner. Node 24 and React 19.3.x are the current tested development environments. The package remains private while licensing, ownership, and release metadata are pending.
 
 Runtime validators must synchronously return exactly true for accepted values. Promise/thenable results are rejected; native Promise rejections are observed without invoking custom thenable methods. Store defaults, updates and migrations are also synchronous.
 

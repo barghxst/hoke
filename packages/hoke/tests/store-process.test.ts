@@ -22,7 +22,7 @@ try {
       "node",
       "--outDir",
       buildDir,
-      fileURLToPath(new URL("./store.ts", import.meta.url)),
+      fileURLToPath(new URL("../src/kv/index.ts", import.meta.url)),
     ],
     { encoding: "utf8", timeout: 30_000 },
   );
@@ -52,7 +52,7 @@ it.each(["local", "cross-realm", "custom thenable"])(
         timeout: 10_000,
         input: `import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
-import { createKV, createStore, defineStore, StoreError, createLocalStorage, KVStorageError }
+import { KV, createStore, defineStore, StoreError, LocalStorageBackend, KVStorageError }
   from ${JSON.stringify(pathToFileURL(join(buildDir, "kv/index.js")).href)};
 const kind = ${JSON.stringify(kind)};
 let customCalls = 0;
@@ -61,7 +61,23 @@ const rejected = () => kind === "cross-realm"
   : kind === "custom thenable"
     ? { then() { customCalls++; throw new Error("must not execute"); } }
     : Promise.reject(new Error("async failure"));
-const makeKV = () => createKV();
+const makeKV = () => {
+  const entries = new Map();
+  return new KV({ name: "test", backend: {
+    read: key => entries.get(key),
+    write: (key, value) => { entries.set(key, value); },
+    remove: key => { entries.delete(key); },
+  }});
+};
+const objectKV = () => {
+  const entries = new Map();
+  return {
+    get: key => entries.get(key),
+    set: (key, value) => { entries.set(key, value); },
+    delete: key => { entries.delete(key); },
+    subscribe: () => () => {},
+  };
+};
 const definition = extra => defineStore({
   key: "counter", version: 1, defaults: () => 0,
   validate: value => typeof value === "number", ...extra,
@@ -78,7 +94,7 @@ expectCode(() => store.update(rejected), "async-result");
 assert.equal(kv.get("counter"), undefined);
 assert.equal(store.getSnapshot(), 0);
 
-const persistedKV = makeKV();
+const persistedKV = objectKV();
 const persisted = { __stowtree: 1, version: 1, value: rejected() };
 persistedKV.set("counter", persisted);
 expectCode(() => createStore(persistedKV, definition()), "invalid-value");
@@ -90,7 +106,7 @@ migrationKV.set("counter", original);
 expectCode(() => createStore(migrationKV, definition({
   version: 2, migrations: { 2: rejected },
 })), "async-result");
-assert.equal(migrationKV.get("counter"), original);
+assert.deepEqual(migrationKV.get("counter"), original);
 
 expectCode(() => createStore(makeKV(), definition({ validate: rejected })), "invalid-defaults");
 const validationKV = makeKV();
@@ -104,7 +120,7 @@ expectCode(() => createStore(migrationKV, definition({
   version: 2, migrations: { 2: () => 2 },
   validate: value => value === 0 ? true : rejected(),
 })), "invalid-value");
-assert.equal(migrationKV.get("counter"), original);
+assert.deepEqual(migrationKV.get("counter"), original);
 
 for (const invalid of [Promise.resolve(true), Promise.resolve(false), 1, "true"]) {
   expectCode(() => createStore(makeKV(), definition({ validate: () => invalid })), "invalid-defaults");
@@ -119,27 +135,27 @@ const storage = {
 const physicalKey = 'stowtree:["async-validation","key"]';
 data.set(physicalKey, "42");
 let accepts = true;
-const adapter = createLocalStorage({
-  name: "async-validation", storage,
+const adapter = new KV({
+  name: "async-validation", backend: new LocalStorageBackend({ storage }),
   validate: () => accepts ? true : rejected(),
 });
-const oldSnapshot = adapter.read("key");
+const oldSnapshot = adapter.get("key");
 accepts = false;
-assert.throws(() => adapter.read("key"), error =>
+assert.throws(() => adapter.get("key"), error =>
   error instanceof KVStorageError && error.code === "INVALID_DATA");
-assert.throws(() => adapter.write("key", 99), error =>
-  error instanceof KVStorageError && error.code === "INVALID_VALUE");
+assert.throws(() => adapter.set("key", 99), error =>
+  error instanceof KVStorageError && error.code === "INVALID_DATA");
 assert.equal(data.get(physicalKey), "42");
 accepts = true;
-assert.equal(adapter.read("key").value, 42);
-assert.notEqual(adapter.read("key"), oldSnapshot);
-assert.throws(() => adapter.write("key", rejected()), error =>
+assert.equal(adapter.get("key"), 42);
+assert.equal(adapter.get("key"), oldSnapshot);
+assert.throws(() => adapter.set("key", rejected()), error =>
   error instanceof KVStorageError && error.code === "INVALID_VALUE");
 assert.equal(data.get(physicalKey), "42");
 for (const invalid of [Promise.resolve(true), Promise.resolve(false), 1, "true"]) {
-  const invalidAdapter = createLocalStorage({ name: "async-validation", storage, validate: () => invalid });
-  assert.throws(() => invalidAdapter.read("key"), error => error.code === "INVALID_DATA");
-  assert.throws(() => invalidAdapter.write("key", 99), error => error.code === "INVALID_VALUE");
+  const invalidAdapter = new KV({ name: "async-validation", backend: new LocalStorageBackend({ storage }), validate: () => invalid });
+  assert.throws(() => invalidAdapter.get("key"), error => error.code === "INVALID_DATA");
+  assert.throws(() => invalidAdapter.set("key", 99), error => error.code === "INVALID_DATA");
   assert.equal(data.get(physicalKey), "42");
 }
 assert.equal(customCalls, 0);

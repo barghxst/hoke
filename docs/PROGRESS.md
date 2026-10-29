@@ -369,3 +369,11 @@ ADR0019 фиксирует payload reuse и coordinator. Браузерные un
 - [x] Пользователь явно разрешил commit и push; это отражено в AGENTS.md. Первые23 накопленных проверенных commits уже отправлены origin/main (до6b98b3b). Новые законченные задачи фиксируются и отправляются тем же обычным push без force. Все author/committer — barghxst, без assistant attribution.
 
 Публичный контейнер теперь доступен через demo/API. Дальше остаются DB schema migrations, дополнительная browser matrix/ошибки, explicit legacy import и отдельный протокол physical reclamation; multi-tab/RN/devtools идут последующими этапами плана. npm остаётся private, лицензия и внешняя публикация отдельно не согласованы. GitHub CI не объявляется зелёным без remote проверки.
+
+## KV: классы и web/native backend / 29 октября
+
+По запросу пользователя KV переводится с фабрик на классы и название backend. `new KV({ name, backend?, validate? })` выбирает localStorage на web и MMKV в React Native. Общий слой отвечает за строгий JSON, проверку значений, namespace, snapshots и локальные подписки; backend читает/пишет строки через синхронные read/write/remove. Физические localStorage ключи и Store envelope сохраняются; формат DB не меняется.
+
+Публичный memory backend исключён. Входы `kv/web` и `kv/native` разделены, index.ts содержит только экспорты. Тесты KV вынесены из runtime. SecureKV, шифрование, TTL и async backend не входят в этот срез. Причины и альтернативы — ADR0022.
+
+Проверки: `pnpm check` прошёл — 353 JS, 60 actual-WASM, 254 Rust и 11 Python tests, tarball/SSR/native declarations и 9 demo-launcher tests. Настоящий Chrome: 96 tests прошли. Дополнительно проверено отклонение случайных async backend без ложного уведомления и unhandled rejection. По уточнению пользователя поля/методы классов используют TypeScript private; промежуточный shared barrel удалён, фасады содержат явные экспорты. Нативная сборка и выполнение на настоящих iOS/Android пока не проверены; mock MMKV и проверки типов не заменяют device tests.

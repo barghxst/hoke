@@ -28,19 +28,19 @@ pnpm demo
 2. Нажмите «Вернуть defaults»: запись удалится, стор вернёт значения по умолчанию.
 3. «1. Создать и показать v1» сохранит старую запись с darkMode. Она видна внизу и остаётся v1 после перезагрузки. Нажмите отдельно «2. Мигрировать v1 → v2»: darkMode превратится в theme, а версия — в 2.
 4. «Загрузить v3» покажет future-version и оставит новую запись нетронутой.
-5. «Удалить данные демо» — явное удаление записи через KV для восстановления примера.
+5. «Удалить данные демо» — явное удаление сырой записи через backend для восстановления примера, включая повреждённый JSON.
 
-## KV, адаптер и стор
+## KV, backend и стор
 
 - **KV** хранит значения по строковым ключам и уведомляет об изменениях одного ключа.
-- **Адаптер** отвечает за физическое хранение: память или localStorage.
+- **Backend** отвечает за физическое хранение строк: localStorage на web, MMKV в React Native или пользовательская реализация.
 - **Стор** задаёт схему, defaults и миграции одного значения поверх KV.
 - **React-хук** подписывается на snapshot стора или результат селектора.
 
 ```ts
-import { createKV } from "hoke/kv";
+import { KV } from "hoke/kv";
 
-const kv = createKV<number>(); // отдельное хранилище в памяти
+const kv = new KV<number>({ name: "counters" }); // постоянный платформенный backend
 const unsubscribe = kv.subscribe("count", () => console.log(kv.get("count")));
 kv.set("count", 1);
 kv.delete("count");
@@ -49,10 +49,69 @@ unsubscribe();
 
 Операции синхронные. get отсутствующего ключа возвращает undefined. Подписки вызываются после успешной записи, не вызываются при регистрации и относятся только к одному экземпляру KV. Повторная запись сравнивается через Object.is; удаление отсутствующего ключа не уведомляет подписчиков. Каждая подписка независима, отписку можно вызывать повторно.
 
+## Выбор и расширение backend
+
+Один импорт `hoke/kv` выбирает web или React Native вход при сборке. На web `new KV({ name: "app" })` использует localStorage; на RN — MMKV. Для RN установите `react-native-mmkv` и `react-native-nitro-modules` и выполните нативную сборку приложения (для Expo — prebuild/development build). Работа на настоящих iOS/Android пока не подтверждена. Web-импорт не загружает нативные peers.
+
+Пользовательский backend реализует три синхронных метода:
+
+```ts
+import { KV, type KVBackend } from "hoke/kv";
+
+class CustomBackend implements KVBackend {
+  constructor(private readonly records: Map<string, string>) {}
+
+  read(key: string): string | undefined {
+    return this.records.get(key);
+  }
+
+  write(key: string, value: string): void {
+    this.records.set(key, value);
+  }
+
+  remove(key: string): void {
+    this.records.delete(key);
+  }
+}
+
+const kv = new KV({
+  name: "custom",
+  backend: new CustomBackend(new Map()),
+});
+```
+
+Этот пример хранит данные только в памяти. Публичного MemoryBackend нет; для тестов и нестандартных сред можно передать собственную реализацию. Backend получает физические ключи с namespace и JSON-строки, а кодирование, проверка значений и snapshots остаются в KV. Ошибка операции должна бросаться; успешная запись обязана быть видна следующему чтению. Promise вместо результата не поддерживается.
+
+`LocalStorageBackend` позволяет явно передать совместимую реализацию Web Storage:
+
+```ts
+import { KV, LocalStorageBackend } from "hoke/kv";
+
+const kv = new KV({
+  name: "settings",
+  backend: new LocalStorageBackend({ storage: window.localStorage }),
+});
+```
+
+В React Native `MMKVBackend` принимает готовый MMKV instance или его ID:
+
+```ts
+import { KV, MMKVBackend } from "hoke/kv";
+
+const kv = new KV({
+  name: "settings",
+  backend: new MMKVBackend({ id: "my-app-kv" }),
+});
+```
+
+Для готового instance используйте `new MMKVBackend({ instance })`. По умолчанию backend открывает MMKV ID `hoke.kv`, а пространства `name` разделяются физическими ключами внутри него. Публичный web-вход экспортирует LocalStorageBackend, native-вход — MMKVBackend.
+
+`backend` — единственная подмена физического хранения. При отказе выбранного backend перехода к памяти нет. Классы и JSON-helper разделены; `index.ts` содержит только экспорты.
+
 ## Сторы и сохранение
 
 ```ts
-import { createKV, createLocalStorage, defineStore, createStore } from "hoke/kv";
+import { KV, defineStore, createStore } from "hoke/kv";
 
 type Settings = { theme: "system" | "light" | "dark"; count: number };
 const isSettings = (value: unknown): value is Settings =>
@@ -72,14 +131,9 @@ const settings = defineStore<Settings>({
   validate: isSettings,
 });
 
-// Адаптер читает raw JSON/envelopes; схему значения проверяет Store.
-// Проверять здесь только текущую Settings нельзя: миграции должны прочитать старую схему.
-const kv = createKV<unknown>({
-  storage: createLocalStorage<unknown>({
-    name: "my-app",
-    validate: (value: unknown): value is unknown => true,
-  }),
-});
+// KV читает JSON/envelopes; схему значения проверяет Store.
+// На уровне KV не ограничиваем данные текущей Settings: миграции читают старую схему.
+const kv = new KV({ name: "my-app" });
 const store = createStore(kv, settings);
 const unsubscribe = store.subscribe(() => console.log(store.getSnapshot()));
 store.update((previous) => ({ ...previous, count: previous.count + 1 }));
@@ -90,7 +144,7 @@ unsubscribe();
 
 Пустой стор возвращает стабильные defaults без записи. defaults — фабрика, создающая отдельное начальное значение для каждого экземпляра. set сохраняет envelope `{ __stowtree: 1, version, value }` одной операцией KV. reset удаляет запись. Несколько сторов над одним KV получают общие уведомления.
 
-Считайте все snapshots и переданные значения immutable. В памяти объекты хранятся по ссылке. В localStorage повторное чтение неизменной JSON-строки возвращает тот же объект; каждый get всё равно читает backend и обнаруживает внешнее изменение. Изменение объекта без set не является обновлением стора. update получает защищённую structuredClone-копию: для объектов/массивов используйте возврат нового значения, например `{ ...previous, count: 1 }`. Значения для update и миграций должны поддерживать structuredClone.
+Считайте все snapshots и переданные значения immutable. Все backend получают JSON-строки. Повторное чтение неизменной JSON-строки возвращает тот же объект; каждый get всё равно читает backend и обнаруживает внешнее изменение. Изменение объекта без set не является обновлением стора. update получает защищённую structuredClone-копию: для объектов/массивов используйте возврат нового значения, например `{ ...previous, count: 1 }`. Значения для update и миграций должны поддерживать structuredClone.
 
 ## Миграции
 
@@ -143,17 +197,17 @@ function Counter() {
 
 Создавайте KV/store вне рендера компонента либо сохраняйте экземпляр на весь lifecycle. По умолчанию селекторы сравниваются через Object.is; изменение невыбранного поля не перерисовывает потребителя. Для selector, создающего новый объект, можно передать isEqual.
 
-Хуки используют useSyncExternalStore. Его требования к стабильным snapshots и SSR описаны в [документации React](https://react.dev/reference/react/useSyncExternalStore). getServerSnapshot отдаёт стабильные defaults; defaults на сервере и клиенте должны совпадать. Сохранённое значение появляется после hydration. В SSR создавайте memory KV на запрос; localStorage-адаптер открывайте только на клиенте.
+Хуки используют useSyncExternalStore. Его требования к стабильным snapshots и SSR описаны в [документации React](https://react.dev/reference/react/useSyncExternalStore). getServerSnapshot отдаёт стабильные defaults; defaults на сервере и клиенте должны совпадать. Сохранённое значение появляется после hydration. В SSR создавайте KV с пользовательским backend на запрос (например, из примера выше); платформенный localStorage backend открывайте только на клиенте. Сам импорт модуля безопасен без браузерных globals.
 
 React — optional peer dependency. Импорт hoke/kv не загружает React. Импорт hoke/react требует React из приложения.
 
-## localStorage: ограничения и ошибки
+## KV: ограничения и ошибки
 
-Для простого KV без Store передайте валидатор собственного значения прямо в createLocalStorage. name — непустое пространство ключей; физический ключ выглядит как `stowtree:["my-app","count"]`. Разные имена изолированы.
+Для простого KV можно передать необязательный `validate` в конструктор `new KV({ name, validate })`. Без валидатора проверяется допустимость строгого JSON, но generic TypeScript не проверяет схему сохранённых данных. name — непустое пространство ключей; физический ключ выглядит как `stowtree:["my-app","count"]`. Разные имена изолированы. Этот формат сохранён совместимым с прежним API.
 
 Поддерживаются JSON-значения: строки, конечные числа кроме -0, boolean, null, плотные массивы и простые объекты. undefined, NaN, Infinity, bigint, функции, циклы, Date, Map, символы, геттеры и скрытые свойства отклоняются, чтобы JSON не менял данные молча. Для отсутствующего значения используйте delete. Повторная запись объекта может уведомить подписчиков даже при равном содержимом.
 
-KVStorageError.code: UNAVAILABLE, READ_FAILED, WRITE_FAILED, DELETE_FAILED, INVALID_DATA, INVALID_VALUE. Исходная ошибка хранится в cause. Без доступного localStorage нет перехода в память. Модуль можно импортировать в SSR: браузерные globals читаются только при создании адаптера.
+KVStorageError.code: UNAVAILABLE, READ_FAILED, WRITE_FAILED, DELETE_FAILED, INVALID_DATA, INVALID_VALUE. Исходная ошибка хранится в cause. Без доступного localStorage нет перехода в память. Модуль можно импортировать в SSR: браузерные globals читаются только при создании backend. Подписчики работают только через текущий экземпляр KV; события MMKV из другого экземпляра/нативного кода пока не подключены. Шифрование и SecureKV в этот API не входят.
 
 StoreError.code: invalid-definition, invalid-defaults, invalid-envelope, invalid-value, future-version, migration-required, missing-migration, migration-failed, async-result, update-failed, clone-failed.
 
@@ -163,12 +217,12 @@ StoreError.code: invalid-definition, invalid-defaults, invalid-envelope, invalid
 
 ## Проверки и известные границы
 
-- Тесты KV/storage/store: повреждение данных, квота/доступ, стабильность snapshots, миграции и провал commit.
+- Тесты KV/backend/store: повреждение данных, квота/доступ, стабильность snapshots, миграции и провал commit.
 - React DOM tests в jsdom: selectors, смена store, StrictMode, unsubscribe, SSR и hydration.
 - Tarball: exports, declarations, установленные JS-модули без React и browser globals.
 - Настоящие Chrome/OPFS сценарии выполняются локально; актуальные результаты — в docs/PROGRESS.md. Остальные браузеры/ОС и физическая потеря питания не проверены. jsdom остаётся отдельной проверкой.
 - Уведомления между вкладками и разными экземплярами KV пока отсутствуют. get обнаружит изменённую raw запись, но внешнее изменение само не разбудит подписчика.
-- Нативные платформы, настоящий browser matrix и будущие гарантии DB пока не заявляются.
+- RN backend добавлен, но нативные iOS/Android сборки и сценарии на устройствах пока не проверены. Тест doubles и TypeScript-проверки не заменяют такой прогон. Настоящий browser matrix и будущие гарантии DB пока не заявляются.
 
 Пакет оставлен private. До публикации нужно определить лицензию, владельца npm/GitHub, финальную версию и метаданные. Автоматической публикации нет.
 

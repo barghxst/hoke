@@ -5,8 +5,9 @@ import type { Root } from "react-dom/client";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
-import { createKV, createLocalStorage, createStore, defineStore } from "../kv/index.js";
-import { useStore, useValue } from "./index.js";
+import { createStore, defineStore, KV, LocalStorageBackend } from "../../src/kv/index.js";
+import { useStore, useValue } from "../../src/react/index.js";
+import { MemoryBackend } from "../helpers/memory-backend.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -26,12 +27,9 @@ const settings = defineStore<Settings>({
     typeof (value as Settings).theme === "string",
 });
 function openPersistedStore() {
-  const kv = createKV({
-    storage: createLocalStorage({
-      name: "react-integration",
-      validate: (value): value is unknown => true,
-      storage: localStorage,
-    }),
+  const kv = new KV({
+    name: "react-integration",
+    backend: new LocalStorageBackend({ storage: localStorage }),
   });
   return { kv, store: createStore(kv, settings) };
 }
@@ -88,7 +86,10 @@ it("connects selectors to persistent snapshots, reloads updates and resets to st
 
 it("hydrates matching real Store defaults before exposing persisted client state", () => {
   const error = vi.spyOn(console, "error");
-  const serverStore = createStore(createKV(), settings);
+  const serverStore = createStore(
+    new KV({ name: "server", backend: new MemoryBackend() }),
+    settings,
+  );
   const { store: clientStore } = openPersistedStore();
   clientStore.set({ count: 9, theme: "dark" });
   function Value({ store }: { store: typeof serverStore }) {

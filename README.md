@@ -4,14 +4,14 @@ Hoke — библиотека локального хранения данных
 
 | API          | Для чего                                                | Где хранятся данные                        | Что выполняет код               |
 | ------------ | ------------------------------------------------------- | ------------------------------------------ | ------------------------------- |
-| `hoke/kv`    | Настройки, флаги, небольшие значения                    | Память или localStorage                    | TypeScript                      |
+| `hoke/kv`    | Настройки, флаги, небольшие значения                    | localStorage (web) или MMKV (RN)           | TypeScript                      |
 | `hoke/react` | React-подписки на KV-стор или документ DB               | Использует выбранный KV/DB                 | TypeScript + React              |
 | `hoke/db`    | Типизированные JSON-коллекции и низкоуровневый byte API | Файл OPFS в браузере                       | TypeScript → Worker → Rust/WASM |
 | `hoke-core`  | Сам движок и его native CLI                             | Обычные файлы или явное хранилище в памяти | Rust                            |
 
 KV, его версии схемы и миграции уже работают. Для DB используйте `openDatabase`: строковые ключи, JSON-объекты, runtime-валидация, atomic batch и автоматическое логическое обслуживание. `useDBValue` связывает документ с React. Низкоуровневый `openDB` сохранён отдельно; его default остаётся `wal-v1`.
 
-Пакет ещё не опубликован. React Native запланирован, но не реализован. База экспериментальная; расширенная проверка восстановления после сбоев остаётся следующим этапом.
+Пакет ещё не опубликован. KV разделён на web и React Native backend; запуск на настоящих iOS/Android пока не проверен. React Native DB ещё не реализована. База экспериментальная; расширенная проверка восстановления после сбоев остаётся следующим этапом.
 
 ## Зачем здесь Rust
 
@@ -40,15 +40,17 @@ pnpm demo
 
 Без открытия браузера: `pnpm demo --no-open`. Свой порт: `pnpm demo --port 8080`; `--strict-port` запрещает автоматическую замену. Для готовой сборки: `pnpm demo --no-build`. Остановка: Ctrl+C. Команда `pnpm demo --help` показывает все параметры.
 
-Простой KV в памяти:
+Простой KV с платформенным backend:
 
 ```ts
-import { createKV } from "hoke/kv";
+import { KV } from "hoke/kv";
 
-const settings = createKV<string>();
+const settings = new KV<string>({ name: "settings" });
 settings.set("theme", "dark");
 console.log(settings.get("theme"));
 ```
+
+В браузере KV по умолчанию использует localStorage, в React Native — MMKV. `name` задаёт пространство ключей. JSON-кодирование и подписки общие, свой синхронный backend можно передать через `backend`. Публичного memory backend нет. Для RN нужны `react-native-mmkv` и `react-native-nitro-modules`; нативная сборка приложения обязательна. Импорт модуля не обращается к localStorage, создание KV без custom backend в среде без localStorage завершается ошибкой. [Контракт backend и примеры](docs/USAGE.md).
 
 База в браузере без ручного кодирования байтов:
 

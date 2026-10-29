@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { KV } from "./kv/index.js";
-import { createKV } from "./kv/index.js";
-import { createLocalStorage } from "./kv/local-storage.js";
-import type { StoreDefinition } from "./store.js";
-import { createStore, defineStore, StoreError } from "./store.js";
+import type { KVSource } from "../src/kv/index.js";
+import { KV, LocalStorageBackend } from "../src/kv/index.js";
+import type { StoreDefinition } from "../src/store.js";
+import { createStore, defineStore, StoreError } from "../src/store.js";
+import { MemoryBackend } from "./helpers/memory-backend.js";
 
 type Settings = { count: number; nested?: { label: string } };
 const valid = (value: unknown): value is Settings =>
@@ -19,6 +19,19 @@ const definition = (options: Partial<StoreDefinition<Settings>> = {}): StoreDefi
     validate: valid,
     ...options,
   });
+function objectKV(): KVSource<unknown> {
+  const data = new Map<string, unknown>();
+  return {
+    get: (key) => data.get(key),
+    set: (key, value) => {
+      data.set(key, value);
+    },
+    delete: (key) => {
+      data.delete(key);
+    },
+    subscribe: () => () => {},
+  };
+}
 const record = <T>(version: number, value: T) => ({ __stowtree: 1, version, value });
 function errorCode(fn: () => unknown, code: string) {
   try {
@@ -33,7 +46,7 @@ function errorCode(fn: () => unknown, code: string) {
 
 describe("store definitions and snapshots", () => {
   it("returns stable defaults without writing and isolates defaults between instances", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const write = vi.spyOn(kv, "set");
     const a = createStore(kv, definition());
     const b = createStore(kv, definition());
@@ -44,13 +57,13 @@ describe("store definitions and snapshots", () => {
     expect(kv.get("settings")).toBeUndefined();
   });
   it("writes envelopes, updates, resets and preserves the server snapshot", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(kv, definition());
     const defaults = store.getServerSnapshot();
     const next = { count: 4 };
     store.set(next);
     expect(kv.get("settings")).toEqual(record(1, next));
-    expect(store.getSnapshot()).toBe(next);
+    expect(store.getSnapshot()).toEqual(next);
     expect(store.getSnapshot()).toBe(store.getSnapshot());
     store.update((previous) => ({ count: previous.count + 2 }));
     expect(store.getSnapshot()).toEqual({ count: 6 });
@@ -60,7 +73,7 @@ describe("store definitions and snapshots", () => {
     expect(store.getSnapshot()).toBe(defaults);
   });
   it("shares notifications and snapshots through a KV and unsubscribes", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const a = createStore(kv, definition());
     const b = createStore(kv, definition());
     const listener = vi.fn(() => b.getSnapshot());
@@ -75,7 +88,7 @@ describe("store definitions and snapshots", () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
   it("does not notify when validation fails", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(kv, definition());
     const listener = vi.fn();
     store.subscribe(listener);
@@ -96,7 +109,7 @@ describe("store definitions and snapshots", () => {
     errorCode(
       () =>
         createStore(
-          createKV(),
+          new KV({ name: "test", backend: new MemoryBackend() }),
           definition({
             defaults: () => {
               throw Error("bad");
@@ -106,13 +119,17 @@ describe("store definitions and snapshots", () => {
       "invalid-defaults",
     );
     errorCode(
-      () => createStore(createKV(), definition({ defaults: () => ({ count: NaN }) })),
+      () =>
+        createStore(
+          new KV({ name: "test", backend: new MemoryBackend() }),
+          definition({ defaults: () => ({ count: NaN }) }),
+        ),
       "invalid-defaults",
     );
     errorCode(
       () =>
         createStore(
-          createKV(),
+          new KV({ name: "test", backend: new MemoryBackend() }),
           definition({
             validate: (() => {
               throw Error("bad");
@@ -139,18 +156,18 @@ describe("store definitions and snapshots", () => {
     { __stowtree: 2, version: 1, value: {} },
     { __stowtree: 1, version: 1 },
   ])("rejects malformed stored envelope %#", (raw) => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     kv.set("settings", raw);
     errorCode(() => createStore(kv, definition()), "invalid-envelope");
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
   });
   it("validates persisted current values", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     kv.set("settings", record(1, { count: "no" }));
     errorCode(() => createStore(kv, definition()), "invalid-value");
   });
   it("detects external writes, deletion and corruption without serving stale cache", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(kv, definition());
     store.set({ count: 1 });
     const first = store.getSnapshot();
@@ -164,7 +181,7 @@ describe("store definitions and snapshots", () => {
     expect(store.getSnapshot()).toBe(store.getServerSnapshot());
   });
   it("protects an existing snapshot and defaults from a mutating updater failure", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(
       kv,
       definition({ defaults: () => ({ count: 0, nested: { label: "safe" } }) }),
@@ -192,7 +209,7 @@ describe("store definitions and snapshots", () => {
     expect(kv.get("settings")).toBe(original);
   });
   it("rejects invalid and async updater output without committing", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(kv, definition());
     errorCode(() => store.update(() => ({ count: NaN })), "invalid-value");
     errorCode(() => store.update((() => Promise.resolve({ count: 1 })) as never), "async-result");
@@ -202,7 +219,7 @@ describe("store definitions and snapshots", () => {
 
 describe("migrations", () => {
   it("executes every step and commits exactly once; does not rerun after reopening", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     kv.set("settings", record(1, { old: 2 }));
     const write = vi.spyOn(kv, "set");
     const step2 = vi.fn((value: unknown) => ({ count: (value as { old: number }).old }));
@@ -217,7 +234,7 @@ describe("migrations", () => {
     expect(step3).toHaveBeenCalledTimes(1);
   });
   it("checks the complete migration path before invoking any step", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const raw = record(1, { count: 3 });
     kv.set("settings", raw);
     const step = vi.fn((x: unknown) => x);
@@ -226,7 +243,7 @@ describe("migrations", () => {
       "missing-migration",
     );
     expect(step).not.toHaveBeenCalled();
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
   });
   it.each([
     [
@@ -247,7 +264,7 @@ describe("migrations", () => {
     // biome-ignore lint/suspicious/noThenProperty: Intentionally tests rejection of a custom thenable.
     ["async-result", () => ({ then() {} })],
   ] as const)("leaves original record intact on %s", (code, migration) => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const raw = record(1, { count: 1 });
     kv.set("settings", raw);
     const write = vi.spyOn(kv, "set");
@@ -255,12 +272,12 @@ describe("migrations", () => {
       () => createStore(kv, definition({ version: 2, migrations: { 2: migration } })),
       code,
     );
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
     expect(raw.value.count).toBe(1);
     expect(write).not.toHaveBeenCalled();
   });
   it("protects nested source data even when a later migration fails", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const raw = record(1, { count: 2, nested: { label: "safe" } });
     kv.set("settings", raw);
     errorCode(
@@ -280,20 +297,20 @@ describe("migrations", () => {
         ),
       "migration-failed",
     );
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
     expect(raw.value.nested.label).toBe("safe");
   });
   it("rejects future versions on opening and later reads", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(kv, definition());
     const raw = record(2, { count: 1 });
     kv.set("settings", raw);
     errorCode(store.getSnapshot, "future-version");
     errorCode(() => createStore(kv, definition()), "future-version");
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
   });
   it("does not migrate or write during getSnapshot after an incompatible external version change", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const step = vi.fn((x: unknown) => x);
     const store = createStore(kv, definition({ version: 2, migrations: { 2: step } }));
     const raw = record(1, { count: 1 });
@@ -302,14 +319,19 @@ describe("migrations", () => {
     errorCode(store.getSnapshot, "migration-required");
     expect(write).not.toHaveBeenCalled();
     expect(step).not.toHaveBeenCalled();
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
   });
 });
 
 describe("storage failures", () => {
   function setup() {
-    const memory = createKV();
-    const kv: KV<unknown> = { ...memory };
+    const memory = new KV({ name: "test", backend: new MemoryBackend() });
+    const kv: KVSource<unknown> = {
+      get: (key) => memory.get(key),
+      set: (key, value) => memory.set(key, value),
+      delete: (key) => memory.delete(key),
+      subscribe: (key, listener) => memory.subscribe(key, listener),
+    };
     return { memory, kv };
   }
   it("propagates failed migration commit and preserves original data", () => {
@@ -326,7 +348,7 @@ describe("storage failures", () => {
         definition({ version: 2, migrations: { 2: (x) => ({ ...(x as Settings), count: 2 }) } }),
       ),
     ).toThrow(failure);
-    expect(memory.get("settings")).toBe(raw);
+    expect(memory.get("settings")).toEqual(raw);
   });
   it("never substitutes the last good cache after a read error", () => {
     const { kv } = setup();
@@ -334,9 +356,9 @@ describe("storage failures", () => {
     store.set({ count: 1 });
     expect(store.getSnapshot()).toEqual({ count: 1 });
     const failure = Error("read denied");
-    kv.get = () => {
+    vi.spyOn(kv, "get").mockImplementation(() => {
       throw failure;
-    };
+    });
     expect(store.getSnapshot).toThrow(failure);
     expect(store.getSnapshot).toThrow(failure);
     expect(store.getServerSnapshot()).toEqual({ count: 0 });
@@ -376,12 +398,9 @@ describe("store edge cases", () => {
         data.delete(key);
       },
     };
-    const kv = createKV({
-      storage: createLocalStorage({
-        storage: backend,
-        name: "test",
-        validate: (value: unknown): value is unknown => true,
-      }),
+    const kv = new KV({
+      name: "test",
+      backend: new LocalStorageBackend({ storage: backend }),
     });
     const store = createStore(kv, definition());
     store.set({ count: 1 });
@@ -397,7 +416,7 @@ describe("store edge cases", () => {
     expect(store.getSnapshot()).toBe(store.getServerSnapshot());
   });
   it("allows intermediate unknown schemas and validates only the final migration value", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     kv.set("settings", record(1, "old"));
     const store = createStore(
       kv,
@@ -413,23 +432,23 @@ describe("store edge cases", () => {
   });
   it("does not run migrations for a missing record", () => {
     const step = vi.fn((x: unknown) => x);
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     createStore(kv, definition({ version: 2, migrations: { 2: step } }));
     expect(step).not.toHaveBeenCalled();
     expect(kv.get("settings")).toBeUndefined();
   });
   it("fails cloning without invoking an updater or damaging original data", () => {
-    const kv = createKV();
+    const kv = objectKV();
     const raw = record(1, { count: 1, callback: () => 1 });
     kv.set("settings", raw);
     const store = createStore(kv, definition());
     const updater = vi.fn((x: Settings) => x);
     errorCode(() => store.update(updater), "clone-failed");
     expect(updater).not.toHaveBeenCalled();
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
   });
   it("preserves source Map contents on a throwing updater despite Map internal mutability", () => {
-    const kv = createKV();
+    const kv = objectKV();
     const d = defineStore({
       key: "map",
       version: 1,
@@ -449,11 +468,11 @@ describe("store edge cases", () => {
     expect(store.getSnapshot().get("safe")).toBe(1);
   });
   it("propagates a backend read error while opening", () => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const failure = Error("blocked");
-    kv.get = () => {
+    vi.spyOn(kv, "get").mockImplementation(() => {
       throw failure;
-    };
+    });
     expect(() => createStore(kv, definition())).toThrow(failure);
   });
 });
@@ -465,7 +484,7 @@ describe("stale store write guards", () => {
     ["invalid-envelope", 1, { broken: true }],
     ["invalid-value", 1, record(1, { count: "bad" })],
   ] as const)("preserves external %s data on set, update and reset", (code, version, raw) => {
-    const kv = createKV();
+    const kv = new KV({ name: "test", backend: new MemoryBackend() });
     const store = createStore(kv, definition({ version, migrations: { 2: (value) => value } }));
     kv.set("settings", raw);
     const write = vi.spyOn(kv, "set");
@@ -476,7 +495,7 @@ describe("stale store write guards", () => {
     errorCode(() => store.set({ count: 99 }), code);
     errorCode(() => store.update(updater), code);
     errorCode(store.reset, code);
-    expect(kv.get("settings")).toBe(raw);
+    expect(kv.get("settings")).toEqual(raw);
     expect(write).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
     expect(updater).not.toHaveBeenCalled();
