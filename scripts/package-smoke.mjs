@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const directory = await mkdtemp(join(tmpdir(), "hoke-package-"));
@@ -63,6 +64,50 @@ try {
   `,
   );
   run("node", ["--conditions=react-native", "resolve-native.mjs"], directory);
+  await writeFile(
+    join(directory, "web-runtime.mjs"),
+    `
+    import assert from 'node:assert/strict';
+    import { KV } from 'hoke/kv/web';
+    import { KV as AutomaticKV } from 'hoke/kv';
+    assert.equal(KV, AutomaticKV);
+    assert(import.meta.resolve('hoke/kv').endsWith('/dist/kv/web/index.js'));
+    const values = new Map();
+    globalThis.localStorage = {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: key => values.delete(key),
+    };
+    const kv = new KV({name: 'web-runtime', backend: {get native() {throw new Error('native branch accessed')}}});
+    kv.set('key', 42);
+    assert.equal(kv.get('key'), 42);
+  `,
+  );
+  run("node", ["--conditions=browser", "--conditions=react-native", "web-runtime.mjs"], directory);
+  await writeFile(
+    join(directory, "explicit-web.mjs"),
+    `
+    import assert from 'node:assert/strict';
+    import { KV } from 'hoke/kv/web';
+    assert.equal(typeof KV, 'function');
+    assert.throws(() => new KV({name:'no-browser'}), error => error.code === 'UNAVAILABLE');
+  `,
+  );
+  run("node", ["--conditions=react-native", "explicit-web.mjs"], directory);
+  const webBundle = await build({
+    entryPoints: [join(directory, "web-runtime.mjs")],
+    bundle: true,
+    platform: "browser",
+    format: "esm",
+    conditions: ["browser", "react-native"],
+    external: ["node:assert/strict"],
+    write: false,
+    metafile: true,
+  });
+  assert(
+    !Object.keys(webBundle.metafile.inputs).some((path) => /react-native|kv\/native/.test(path)),
+    "Web bundle includes native code",
+  );
   const consumer = `
     import assert from 'node:assert/strict';
 
@@ -270,6 +315,58 @@ try {
   );
   assert.equal(packed.peerDependenciesMeta.react.optional, true);
 
+  await mkdir(join(directory, "node_modules/react-native-mmkv"));
+  await writeFile(
+    join(directory, "node_modules/react-native-mmkv/package.json"),
+    JSON.stringify({
+      name: "react-native-mmkv",
+      version: "4.3.2",
+      type: "module",
+      exports: "./index.js",
+    }),
+  );
+  await writeFile(
+    join(directory, "node_modules/react-native-mmkv/index.js"),
+    `
+    export const calls = [];
+    const instances = new Map();
+    export function createMMKV(options) {
+      calls.push(options);
+      let values = instances.get(options.id);
+      if (!values) { values = new Map(); instances.set(options.id, values); }
+      return {
+        getString: key => values.get(key), contains: key => values.has(key),
+        set: (key, value) => { values.set(key, value); }, remove: key => values.delete(key),
+      };
+    }
+  `,
+  );
+  await writeFile(
+    join(directory, "native-runtime.mjs"),
+    `
+    import assert from 'node:assert/strict';
+    import { KV } from 'hoke/kv/native';
+    import { KV as AutomaticKV } from 'hoke/kv';
+    import { calls } from 'react-native-mmkv';
+    assert.equal(KV, AutomaticKV);
+    assert.equal(calls.length, 0);
+    Object.defineProperty(globalThis, 'localStorage', { get() { throw new Error('web backend accessed'); } });
+    const kv = new KV({name: 'native-runtime', backend: { get web() {throw new Error('web branch accessed')} }});
+    kv.set('key', 42);
+    assert.equal(kv.get('key'), 42);
+    assert.deepEqual(calls, [{id:'hoke.kv'}]);
+    assert.equal(new KV({name: 'native-runtime'}).get('key'), 42);
+    const values = new Map();
+    const backend = {
+      read: key => values.get(key), write: (key, value) => {values.set(key, value)}, remove: key => {values.delete(key)},
+    };
+    const custom = new KV({name:'custom', backend: {native:backend}});
+    custom.set('key', 7);
+    assert.equal(custom.get('key'), 7);
+    assert.equal(calls.length, 2);
+  `,
+  );
+  run("node", ["--conditions=react-native", "native-runtime.mjs"], directory);
   const workspace = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   run(
     "npm",

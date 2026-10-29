@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { KV as SourceKV } from "../../src/kv/kv.js";
 import type { MMKVInstance } from "../../src/kv/native/index.js";
 import { KV, KVStorageError, MMKVBackend } from "../../src/kv/native/index.js";
+import { KV as WebKV } from "../../src/kv/web/index.js";
 import { MemoryBackend } from "../helpers/memory-backend.js";
 
 const { createMMKV } = vi.hoisted(() => ({ createMMKV: vi.fn() }));
 vi.mock("react-native-mmkv", () => ({ createMMKV }));
+vi.mock(
+  "../../src/kv/web/resolve-backend.js",
+  async () => import("../../src/kv/native/resolve-backend.js"),
+);
 const constructionCallsAtImport = createMMKV.mock.calls.length;
 
 function mockInstance() {
@@ -186,4 +192,92 @@ it("rejects async MMKV existence checks and observes rejected promises", async (
   expect(() => backend.read("missing")).toThrow(TypeError);
   expect(() => kv.get("missing")).toThrow(expect.objectContaining({ code: "READ_FAILED" }));
   await new Promise((resolve) => setImmediate(resolve));
+});
+
+describe("native platform backend selection", () => {
+  it("exports the same source class from both platform entries", () => {
+    expect(KV).toBe(SourceKV);
+    expect(WebKV).toBe(SourceKV);
+  });
+
+  it("selects the native backend from a platform map", () => {
+    const web = new MemoryBackend();
+    const native = new MemoryBackend();
+    const kv = new KV({ name: "platform", backend: { web, native } });
+    kv.set("key", "native");
+    expect(native.read('stowtree:["platform","key"]')).toBe('"native"');
+    expect(web.read('stowtree:["platform","key"]')).toBeUndefined();
+    expect(createMMKV).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { web: new MemoryBackend() }])(
+    "uses MMKV when a map omits native: %o",
+    (backend) => {
+      const kv = new KV({ name: "default", backend });
+      kv.set("key", 1);
+      expect(kv.get("key")).toBe(1);
+      expect(createMMKV).toHaveBeenCalledExactlyOnceWith({ id: "hoke.kv" });
+    },
+  );
+
+  it("never reads the unselected web getter", () => {
+    const web = vi.fn(() => {
+      throw new Error("unselected web");
+    });
+    const native = new MemoryBackend();
+    const backend = Object.defineProperty({ native }, "web", { get: web });
+    const kv = new KV({ name: "selected", backend });
+    kv.set("key", 1);
+    expect(kv.get("key")).toBe(1);
+    expect(web).not.toHaveBeenCalled();
+    expect(createMMKV).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid selected backend without constructing the default", () => {
+    expect(() => new KV({ name: "invalid", backend: { native: null } as never })).toThrow(
+      TypeError,
+    );
+    expect(createMMKV).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back when a selected getter throws", () => {
+    const failure = new Error("native selection failed");
+    const backend = Object.defineProperty({}, "native", {
+      get: () => {
+        throw failure;
+      },
+    });
+    expect(() => new KV({ name: "selected", backend })).toThrow(failure);
+    expect(createMMKV).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back when the selected backend fails to write", () => {
+    const failure = new Error("custom write failed");
+    const native = {
+      read: () => undefined,
+      write: () => {
+        throw failure;
+      },
+      remove: () => {},
+    };
+    const kv = new KV({ name: "selected", backend: { native } });
+    expect(() => kv.set("key", 1)).toThrow(
+      expect.objectContaining({ code: "WRITE_FAILED", cause: failure }),
+    );
+    expect(createMMKV).not.toHaveBeenCalled();
+  });
+
+  it("checks constructor options before creating the default and defers value validation", () => {
+    expect(() => new KV({ name: "invalid", validate: false as never })).toThrow(TypeError);
+    expect(createMMKV).not.toHaveBeenCalled();
+    const validate = vi.fn((value: unknown): value is number => typeof value === "number");
+    const kv = new KV<number>({
+      name: "valid",
+      validate: (value: unknown): value is number => validate(value),
+    });
+    expect(createMMKV).toHaveBeenCalledTimes(1);
+    expect(validate).not.toHaveBeenCalled();
+    kv.set("key", 1);
+    expect(validate).toHaveBeenCalledExactlyOnceWith(1);
+  });
 });

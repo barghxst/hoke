@@ -6,7 +6,7 @@ import {
   defineStore,
   KV,
   LocalStorageBackend,
-} from "../../packages/hoke/src/kv/index.js";
+} from "../../packages/hoke/src/kv/web/index.js";
 
 const html = readFileSync("examples/web/index.html", "utf8");
 const inline = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];

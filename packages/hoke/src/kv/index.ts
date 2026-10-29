@@ -1,5 +1,7 @@
 export type {
   KVBackend,
+  KVBackendOption,
+  KVBackends,
   KVOptions,
   KVSource,
   Listener,

@@ -14,7 +14,11 @@ Hoke хранит данные локально, внутри приложени
 
 ## KV: общее ядро и платформенные backend
 
-`kv/index.ts` и платформенные `index.ts` содержат только экспорты. В `kv/kv.ts` находится общий класс и его состояние; `kv/backend.ts` задаёт сырой синхронный контракт `read/write/remove`. Web и native классы KV добавляют только выбор backend по умолчанию. `kv/web/` содержит localStorage backend, `kv/native/` — MMKV backend и нативный вход. Web-граф импортов не загружает MMKV/Nitro. Тесты KV находятся отдельно от runtime-кода в `packages/hoke/tests/kv/`.
+`kv/index.ts` и платформенные `index.ts` содержат только экспорты. В `kv/kv.ts` определён единственный класс KV и его состояние; `kv/backend.ts` задаёт сырой синхронный контракт `read/write/remove`. Платформенные подклассы и KVCore не нужны: выбор default выполняет resolver. Общий исходник импортирует web resolver, а native сборка заменяет только его реализацию, без runtime-регистрации и глобального состояния.
+
+`kv/web/` содержит localStorage backend и web resolver, `kv/native/` — MMKV backend и native resolver. Явные входы `hoke/kv/web` и `hoke/kv/native` фиксируют платформу; web-вход не импортирует MMKV/Nitro. Автоматический `hoke/kv` проверяет browser перед react-native, чтобы React Native Web использовал web backend. Тесты KV находятся отдельно от runtime-кода в `packages/hoke/tests/kv/`.
+
+Прямой `backend` используется без выбора платформы. Карта `backend: { web?, native? }` выбирает соответствующую ветку или платформенный default, если ветка отсутствует. Ошибка переданного backend остаётся ошибкой, перехода к default нет.
 
 Пользовательский backend получает физический ключ, уже содержащий namespace, и JSON-строку. Прежний ключ `stowtree:["name","key"]` сохранён: переход к классам не переносит и не переписывает данные. MemoryBackend остаётся внутренним тестовым helper. Публичные Store и DB не переводятся на классы в этом срезе. [ADR 0022](adr/0022-kv-backends-and-classes.md).
 

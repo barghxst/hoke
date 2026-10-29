@@ -14,8 +14,15 @@ export interface KVSource<Value = unknown> {
   subscribe(key: string, listener: Listener): Unsubscribe;
 }
 
+export interface KVBackends {
+  web?: KVBackend;
+  native?: KVBackend;
+}
+
+export type KVBackendOption = KVBackend | KVBackends;
+
 export interface KVOptions<Value = unknown> {
   name: string;
-  backend?: KVBackend;
+  backend?: KVBackendOption;
   validate?: (value: unknown) => value is Value;
 }

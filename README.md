@@ -43,14 +43,14 @@ pnpm demo
 Простой KV с платформенным backend:
 
 ```ts
-import { KV } from "hoke/kv";
+import { KV } from "hoke/kv/web";
 
 const settings = new KV<string>({ name: "settings" });
 settings.set("theme", "dark");
 console.log(settings.get("theme"));
 ```
 
-В браузере KV по умолчанию использует localStorage, в React Native — MMKV. `name` задаёт пространство ключей. JSON-кодирование и подписки общие, свой синхронный backend можно передать через `backend`. Публичного memory backend нет. Для RN нужны `react-native-mmkv` и `react-native-nitro-modules`; нативная сборка приложения обязательна. Импорт модуля не обращается к localStorage, создание KV без custom backend в среде без localStorage завершается ошибкой. [Контракт backend и примеры](docs/USAGE.md).
+В браузере KV по умолчанию использует localStorage, в React Native — MMKV. Для React web используйте явный импорт `hoke/kv/web`, для RN — `hoke/kv/native`; web-вход не загружает MMKV/Nitro. Автоматический `hoke/kv` выбирает browser перед react-native, включая React Native Web. Класс KV один, различается только resolver backend. `name` задаёт пространство ключей. JSON-кодирование и подписки общие, свой синхронный backend можно передать через `backend` напрямую или картой `{ web, native }`. Пропущенная ветка карты использует платформенный default; ошибка заданного backend не вызывает fallback. Публичного memory backend нет. Для RN нужны `react-native-mmkv` и `react-native-nitro-modules`; нативная сборка приложения обязательна. Импорт модуля не обращается к localStorage, создание KV без custom backend в среде без localStorage завершается ошибкой. [Контракт backend и примеры](docs/USAGE.md).
 
 База в браузере без ручного кодирования байтов:
 

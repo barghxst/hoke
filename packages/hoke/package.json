@@ -10,15 +10,15 @@
   "sideEffects": false,
   "exports": {
     "./kv": {
-      "react-native": {
-        "types": "./dist/kv/native/index.d.ts",
-        "import": "./dist/kv/native/index.js",
-        "default": "./dist/kv/native/index.js"
-      },
       "browser": {
         "types": "./dist/kv/web/index.d.ts",
         "import": "./dist/kv/web/index.js",
         "default": "./dist/kv/web/index.js"
+      },
+      "react-native": {
+        "types": "./dist/kv/native/index.d.ts",
+        "import": "./dist/kv/native/index.js",
+        "default": "./dist/kv/native/index.js"
       },
       "types": "./dist/kv/index.d.ts",
       "import": "./dist/kv/index.js"
@@ -30,10 +30,20 @@
     "./db": {
       "types": "./dist/db/index.d.ts",
       "import": "./dist/db/index.js"
+    },
+    "./kv/web": {
+      "types": "./dist/kv/web/index.d.ts",
+      "import": "./dist/kv/web/index.js",
+      "default": "./dist/kv/web/index.js"
+    },
+    "./kv/native": {
+      "types": "./dist/kv/native/index.d.ts",
+      "import": "./dist/kv/native/index.js",
+      "default": "./dist/kv/native/index.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
+    "build": "node ../../scripts/build-package.mjs"
   },
   "description": "Typed key-value storage with reactive, versioned stores for JavaScript and React.",
   "peerDependencies": {

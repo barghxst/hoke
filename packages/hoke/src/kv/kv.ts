@@ -2,27 +2,24 @@ import { isThenable } from "../sync-result.js";
 import type { KVBackend, KVOptions, KVSource, Listener, Unsubscribe } from "./backend.js";
 import { KVStorageError } from "./errors.js";
 import { assertJSON } from "./json.js";
+import { resolveBackend } from "./web/resolve-backend.js";
 
-export function checkKVOptions(options: KVOptions<unknown>): void {
-  if (typeof options.name !== "string" || options.name.length === 0) {
-    throw new TypeError("KV name must not be empty");
-  }
-  if (options.validate !== undefined && typeof options.validate !== "function") {
-    throw new TypeError("KV validator must be a function");
-  }
-}
-
-export class KVCore<Value = unknown> implements KVSource<Value> {
+export class KV<Value = unknown> implements KVSource<Value> {
   private readonly backend: KVBackend;
   private readonly name: string;
   private readonly validate: KVOptions<Value>["validate"];
   private readonly snapshots = new Map<string, { raw: string; value: Value }>();
   private readonly listeners = new Map<string, Set<{ listener: Listener }>>();
 
-  constructor(options: KVOptions<Value> & { backend: KVBackend }) {
-    checkKVOptions(options);
+  constructor(options: KVOptions<Value>) {
+    if (typeof options.name !== "string" || options.name.length === 0) {
+      throw new TypeError("KV name must not be empty");
+    }
+    if (options.validate !== undefined && typeof options.validate !== "function") {
+      throw new TypeError("KV validator must be a function");
+    }
     this.name = options.name;
-    this.backend = options.backend;
+    this.backend = resolveBackend(options.backend);
     this.validate = options.validate;
   }
 

@@ -51,7 +51,11 @@ unsubscribe();
 
 ## Выбор и расширение backend
 
-Один импорт `hoke/kv` выбирает web или React Native вход при сборке. На web `new KV({ name: "app" })` использует localStorage; на RN — MMKV. Для RN установите `react-native-mmkv` и `react-native-nitro-modules` и выполните нативную сборку приложения (для Expo — prebuild/development build). Работа на настоящих iOS/Android пока не подтверждена. Web-импорт не загружает нативные peers.
+Для React web используйте `hoke/kv/web`: этот вход гарантированно не импортирует MMKV/Nitro, даже если рядом установлен React Native. Для RN есть явный `hoke/kv/native`. В обоих входах один класс KV: web default — localStorage, native default — MMKV.
+
+Автоматический импорт `hoke/kv` выбирает browser перед react-native; так web-сборка React Native Web остаётся на localStorage. Если сборщик не задаёт условие browser, используйте явный web-вход.
+
+Для RN установите `react-native-mmkv` и `react-native-nitro-modules` и выполните нативную сборку приложения (для Expo — prebuild/development build). Работа на настоящих iOS/Android пока не подтверждена.
 
 Пользовательский backend реализует три синхронных метода:
 
@@ -85,7 +89,7 @@ const kv = new KV({
 `LocalStorageBackend` позволяет явно передать совместимую реализацию Web Storage:
 
 ```ts
-import { KV, LocalStorageBackend } from "hoke/kv";
+import { KV, LocalStorageBackend } from "hoke/kv/web";
 
 const kv = new KV({
   name: "settings",
@@ -96,7 +100,7 @@ const kv = new KV({
 В React Native `MMKVBackend` принимает готовый MMKV instance или его ID:
 
 ```ts
-import { KV, MMKVBackend } from "hoke/kv";
+import { KV, MMKVBackend } from "hoke/kv/native";
 
 const kv = new KV({
   name: "settings",
@@ -105,6 +109,20 @@ const kv = new KV({
 ```
 
 Для готового instance используйте `new MMKVBackend({ instance })`. По умолчанию backend открывает MMKV ID `hoke.kv`, а пространства `name` разделяются физическими ключами внутри него. Публичный web-вход экспортирует LocalStorageBackend, native-вход — MMKVBackend.
+
+Готовый backend применяется на любой платформе. Если реализации различаются, передайте карту:
+
+```ts
+const kv = new KV({
+  name: "app",
+  backend: {
+    web: webBackend,
+    native: nativeBackend,
+  },
+});
+```
+
+Выбирается только ветка текущей платформы. Пропущенная ветка использует её default; ошибка заданного backend остаётся ошибкой, без переключения на другую ветку или default. Объекты backend должны создаваться в совместимой среде: карта сама не делает нативный импорт безопасным для браузера.
 
 `backend` — единственная подмена физического хранения. При отказе выбранного backend перехода к памяти нет. Классы и JSON-helper разделены; `index.ts` содержит только экспорты.
 

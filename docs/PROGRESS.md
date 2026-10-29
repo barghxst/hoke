@@ -384,3 +384,12 @@ ADR0019 фиксирует payload reuse и coordinator. Браузерные un
 По запросу пользователя удалены поясняющие комментарии из Rust, JS/TS/MJS, Python и примеров документации. Сохранены исполняемые shebang и служебные директивы TypeScript, Vitest и Biome. Лексическая проверка Rust и сравнение AST JS/TS подтвердили сохранение кода; CLI description benchmark runner перенесено из docstring в аргумент argparse, чтобы сохранить help.
 
 `pnpm check` прошёл: 353 JS, 60 actual-WASM, 254 Rust и 11 Python tests; tarball и 9 demo-launcher tests также прошли. Настоящий Chrome: 96 tests прошли.
+
+
+## KV: единый класс и явный web-вход / 29 октября
+
+Удалены KVCore, платформенные подклассы и повторные проверки options. Единственный класс KV проверяет options в конструкторе, затем вызывает платформенный resolver. `backend` принимает готовый KVBackend либо `{ web?, native? }`; отсутствие выбранной ветки использует платформенный default, ошибки переданного backend не запускают fallback. Другая ветка карты не читается.
+
+Добавлены явные `hoke/kv/web` и `hoke/kv/native`; автоматический `hoke/kv` предпочитает browser перед react-native для RN Web. Web-модули используют общий класс напрямую, native-вход собирается из того же исходника с заменой resolver через esbuild. Это зависимость сборки, не runtime. Глобальной регистрации платформы и private package imports нет; package build очищает dist перед компиляцией.
+
+`pnpm check` прошёл: 371 JS, 60 actual-WASM, 254 Rust, 11 Python и 9 demo-launcher tests. Tarball-проверки выполняют native-вход с тестовым MMKV, проверяют web-вход без установленных native peers даже при native condition и собирают web-граф без native-модулей. Настоящий Chrome: 96 tests прошли. Нативная сборка и запуск на iOS/Android не выполнялись.
