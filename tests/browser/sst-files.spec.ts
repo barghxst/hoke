@@ -1,6 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
 
-/** Execute in a dedicated Worker: OPFS sync handles are unavailable on Window. */
 async function inWorker(page: Page, body: string): Promise<unknown> {
   await page.goto("/examples/web/");
   return page.evaluate(async (body) => {
@@ -223,7 +222,7 @@ test("SST merge uses newest versions, preserves tombstones and leaves sources im
     const reopened = await openSstFile(directory, name);
     const restored = compact(reopened.scan()); reopened.close();
     const after = await Promise.all([read(olderName), read(newerName)]);
-    // Reacquisition also proves that merge released both exclusive input handles.
+
     for (const source of [olderName, newerName]) {
       const opened = await openSstFile(directory, source); opened.close();
     }

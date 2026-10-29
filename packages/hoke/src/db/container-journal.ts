@@ -59,7 +59,6 @@ function packedRefs(values: readonly Uint8Array[], kind: number, offsets: Set<bi
   return result;
 }
 
-/** Internal publication primitive, not a KV Database. Owns one exclusive file handle. */
 export class ContainerJournal {
   constructor(
     readonly name: string,
@@ -70,7 +69,7 @@ export class ContainerJournal {
     if (!this.engine) throw new ContainerFileError(this.name, "Container journal is closed");
     return this.engine;
   }
-  /** Stages bytes; this is not a committed user mutation. */
+
   append(kind: "wal" | "sst", payload: Uint8Array): Uint8Array {
     if (kind !== "wal" && kind !== "sst") throw new TypeError("Expected wal or sst segment kind");
     return this.current().append(kind === "wal" ? 1 : 2, bytes(payload, MAX_SEGMENT_BYTES));
@@ -87,7 +86,7 @@ export class ContainerJournal {
   read(segment: Uint8Array): Uint8Array {
     return this.current().read(reference(segment));
   }
-  /** Empty before the first root; otherwise the exact container root payload. */
+
   root(): Uint8Array {
     return this.current().root();
   }
@@ -101,7 +100,7 @@ export class ContainerJournal {
   isPoisoned(): boolean {
     return this.current().is_poisoned();
   }
-  /** Does not publish staged data. Always attempts Rust and JS resource cleanup. */
+
   close(): void {
     const engine = this.engine;
     const handle = this.handle;
@@ -127,7 +126,6 @@ export class ContainerJournal {
   }
 }
 
-/** Caller selects a new container namespace; legacy WAL files are never imported here. */
 export async function openContainerJournal(
   directory: SstDirectory,
   name: string,
@@ -159,9 +157,7 @@ export async function openContainerJournal(
   } catch (error) {
     try {
       handle?.close();
-    } catch {
-      /* Preserve original storage/recovery failure. */
-    }
+    } catch {}
     throw new ContainerFileError(
       name,
       "Cannot open container journal; file outcome may be unknown",

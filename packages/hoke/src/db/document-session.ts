@@ -1,6 +1,5 @@
 import { type BrowserDB, DBError, type DBOperationOptions } from "./client-contract.js";
 
-/** One FIFO for document reads, writes, maintenance and close. Never retries writes. */
 export class DocumentSession {
   private pending: Promise<void> = Promise.resolve();
   private closing = false;
@@ -23,8 +22,6 @@ export class DocumentSession {
       return Promise.reject(error);
     }
     const result = this.pending.then(async () => {
-      // Maintain before the requested mutation: a failed/unknown commit is never retried.
-      // Thresholds leave headroom below the core's 64-table / 64-WAL source caps.
       if (mutation) {
         const stats = await this.raw.stats(options);
         if (stats.tableCount >= 32 || stats.walSegments >= 48) {
@@ -33,8 +30,7 @@ export class DocumentSession {
       }
       return operation();
     });
-    // A failed operation must not leave a permanently rejected queue. The raw
-    // connection remains responsible for CLOSED/poisoned/unknown-outcome errors.
+
     this.pending = result.then(
       () => {},
       () => {},

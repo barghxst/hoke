@@ -1,5 +1,3 @@
-//! Checked WAL replay and repair of physically incomplete EOF tails.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
@@ -41,11 +39,6 @@ fn read_exact<S: Storage>(storage: &mut S, offset: u64, buffer: &mut [u8]) -> Re
     Ok(())
 }
 impl<S: Storage> Engine<S> {
-    /// Open an exclusively owned storage and replay checked records.
-    ///
-    /// Only a physically incomplete final frame is discarded. A full bad header,
-    /// checksum mismatch or sequence gap fails without rewriting the file.
-    /// Creating a new file does not yet synchronize its parent directory entry.
     pub fn open(mut storage: S) -> Result<Self, Error> {
         let mut length = storage.len().map_err(io_error("read WAL length"))?;
         if length == 0 {
@@ -118,7 +111,6 @@ impl<S: Storage> Engine<S> {
             recovery.records_replayed += 1;
         }
         if offset < length {
-            // Parsing the complete prefix succeeded; only then repair a short EOF tail.
             storage
                 .set_len(offset)
                 .map_err(io_error("truncate incomplete WAL tail"))?;

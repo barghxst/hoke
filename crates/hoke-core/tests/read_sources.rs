@@ -242,7 +242,7 @@ fn payload_budget_is_exact_counts_live_rows_and_never_returns_partial_results() 
 #[test]
 fn selected_read_errors_never_fall_back_to_older_versions_or_partial_rows() {
     let (mut wal, _) = wal();
-    // The scan collects a live prefix before reaching the failing winner.
+
     wal.put(b"a", b"prefix").unwrap();
     let (old, old_access) = table(&[(b"b", Some(b"old"))]);
     let (new, access) = table(&[(b"b", Some(b"winner"))]);

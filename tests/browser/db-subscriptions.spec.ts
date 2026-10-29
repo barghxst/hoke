@@ -340,9 +340,7 @@ test("failed OPFS flush emits no invalidation even when recovery finds the unkno
       }
       try {
         await h.db.close();
-      } catch {
-        /* Failed sync also rejects close. */
-      }
+      } catch {}
       return { codes, events: h.events };
     }),
   ).toEqual({ codes: ["ENGINE", "ENGINE"], events: 0 });

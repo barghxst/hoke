@@ -1,4 +1,3 @@
-//! Batch publication faults model visible IO, not power-loss durability.
 use hoke_core::directory::Directory;
 use hoke_core::storage::Storage;
 use hoke_core::{
@@ -344,7 +343,7 @@ fn check_fault(index: usize, operation: &str, write_after: bool, rename_after: b
     directory.arm(Some(index + 1));
     directory.fault.borrow_mut().write_then_fail = write_after;
     directory.fault.borrow_mut().rename_then_fail = rename_after;
-    // rename_then_fail independently models a successful rename returning Err.
+
     if rename_after {
         directory.fault.borrow_mut().fail_at = None;
     }
@@ -411,7 +410,6 @@ fn invalid_batches_do_no_io_and_leave_instance_writable() {
             put(b"valid", b"first"),
             put(b"oversize", &vec![0; 16 * 1024 * 1024 + 1]),
         ],
-        // Repeated keys still count in the raw input-byte budget.
         vec![put(b"x", &vec![0; MAX_BATCH_BYTES / 2]); 2],
     ];
     for operations in invalid {
@@ -515,8 +513,7 @@ fn combined_sst_index_capacity_is_checked_before_io_without_poison() {
         key[..2].copy_from_slice(&index.to_be_bytes());
         key
     }
-    // All individual records fit, and the new batch fits its 32 MiB budget.
-    // The combined WAL delta + batch would exceed the SST's 64 MiB index.
+
     for index in 0..513 {
         db.put(&wide_key(index), b"").unwrap();
     }
@@ -533,8 +530,7 @@ fn combined_sst_index_capacity_is_checked_before_io_without_poison() {
     assert_eq!(db.stats(), stats);
     assert_eq!(db.get(&wide_key(0)).unwrap(), Some(Vec::new()));
     db.put(b"still", b"writable").unwrap();
-    // The same oversized delta must fail manual flush before create_new as well.
-    // These deletes suppress absent keys, so compaction can still fit the live set.
+
     for operation in &operations {
         let hoke_core::BatchOperation::Delete { key } = operation else {
             unreachable!();
@@ -572,8 +568,7 @@ fn table_limit_directory() -> SharedDir {
         .get(&directory.names(".wal").last().unwrap().clone())
         .unwrap()
         .clone();
-    // Reuse immutable valid table bytes to construct the supported table-count
-    // boundary cheaply, without performing 4096 independent publications.
+
     let mut manifest = b"STOWMAN\0".to_vec();
     manifest.extend_from_slice(&1_u32.to_le_bytes());
     manifest.extend_from_slice(&4096_u64.to_le_bytes());
@@ -612,7 +607,7 @@ fn table_count_limit_is_checked_before_io_without_poison() {
     assert_eq!(db.stats(), stats);
     assert_eq!(db.get(b"batch").unwrap(), None);
     db.put(b"still", b"writable").unwrap();
-    // An empty batch needs neither another table nor a publication.
+
     db.write_batch(&[]).unwrap();
 }
 
@@ -691,7 +686,7 @@ fn manual_and_threshold_flush_capacity_errors_allow_compaction_without_reopen() 
         assert_eq!(directory.names(""), names);
         assert_eq!(db.get(b"pending").unwrap(), None);
         assert_eq!(state(&mut db), before());
-        // The error explicitly requests compaction; it must remain available.
+
         db.compact().unwrap();
         db.put(b"pending", b"now committed").unwrap();
         db.flush().unwrap();

@@ -245,7 +245,6 @@
     element("clear").addEventListener("click", () =>
       attempt(() => {
         unsubscribe();
-        // Explicit recovery also removes malformed JSON without reading it first.
         storage.remove('stowtree:["store-demo","settings"]');
         open();
         element("status").textContent = "Запись удалена. Используются defaults без записи на диск.";

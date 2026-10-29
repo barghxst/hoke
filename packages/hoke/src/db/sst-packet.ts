@@ -2,10 +2,9 @@ import { MAX_KEY_BYTES, MAX_VALUE_BYTES } from "./protocol.js";
 import { compareBytes, MAX_SCAN_BYTES } from "./scan.js";
 import { SstFileError } from "./sst-storage.js";
 
-/** Internal building block only: no manifest, publication, or garbage collection. */
 export interface SstEntry {
   key: Uint8Array;
-  /** null is a tombstone; a zero-length array is a stored empty value. */
+
   value: Uint8Array | null;
 }
 export function validKey(key: Uint8Array): void {

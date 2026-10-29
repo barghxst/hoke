@@ -1,4 +1,3 @@
-//! Build durable candidates, then atomically publish their manifest references.
 use std::collections::BTreeMap;
 
 use crate::{

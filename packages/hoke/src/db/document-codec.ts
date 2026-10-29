@@ -3,7 +3,7 @@ import { type CollectionOptions, DocumentError } from "./document-contract.js";
 import { MAX_KEY_BYTES, MAX_VALUE_BYTES } from "./protocol.js";
 
 const encoder = new TextEncoder();
-// ignoreBOM=true preserves a leading U+FEFF instead of discarding key bytes.
+
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 export function encodeString(value: unknown): Uint8Array {
@@ -33,7 +33,6 @@ export function decodeString(bytes: Uint8Array): string {
   }
 }
 
-/** Reject JS values which JSON would omit, invoke, or change silently. */
 function assertJSON(value: unknown, ancestors: Set<object>): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number" && Number.isFinite(value) && !Object.is(value, -0)) return;
@@ -42,9 +41,7 @@ function assertJSON(value: unknown, ancestors: Set<object>): void {
   const array = Array.isArray(value);
   if (Object.getPrototypeOf(value) !== (array ? Array.prototype : Object.prototype))
     throw new TypeError("Expected plain JSON object or array");
-  // JSON.stringify looks up toJSON before traversing properties. Inspect the
-  // descriptor without running a getter; ordinary JSON fields with this name
-  // remain valid when they do not provide a conversion hook.
+
   for (let owner: object | null = value; owner !== null; owner = Object.getPrototypeOf(owner)) {
     const hook = Object.getOwnPropertyDescriptor(owner, "toJSON");
     if (!hook) continue;
@@ -89,7 +86,7 @@ export function encodeDocument<T>(value: T, guard: CollectionOptions<T>["validat
   try {
     assertJSON(value, new Set());
     const json = JSON.stringify(value);
-    // Validate the representation that readers receive, not the caller's object.
+
     validate(JSON.parse(json), guard);
     const bytes = encoder.encode(json);
     if (bytes.length > MAX_VALUE_BYTES) throw new TypeError("Encoded document exceeds 16 MiB");

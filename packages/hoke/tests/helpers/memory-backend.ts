@@ -1,6 +1,5 @@
 import type { KVBackend } from "../../src/kv/backend.js";
 
-/** Internal test backend; intentionally absent from package exports. */
 export class MemoryBackend implements KVBackend {
   private readonly entries = new Map<string, string>();
 

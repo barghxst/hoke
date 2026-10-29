@@ -9,13 +9,11 @@ export interface OpenDatabaseOptions extends DBOperationOptions {
   timeoutMs?: number;
 }
 
-/** Typed JSON collections backed by one exclusively owned container database. */
 export interface Database {
   collection<T>(name: string, options: CollectionOptions<T>): Collection<T>;
   close(): Promise<void>;
 }
 
-/** Internal composition point; the public entry point opens the container itself. */
 export function createDatabase(raw: BrowserDB): Database {
   if (raw.mode !== "container-v1") {
     throw new DBError("UNSUPPORTED", "Document databases require container-v1");
@@ -53,7 +51,6 @@ export function createDatabase(raw: BrowserDB): Database {
   };
 }
 
-/** Open JSON collections without choosing binary codecs or a storage mode. */
 export async function openDatabase(
   name: string,
   options: OpenDatabaseOptions = {},

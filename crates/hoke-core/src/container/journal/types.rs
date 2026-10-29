@@ -1,4 +1,3 @@
-//! Journal errors and recovery diagnostics.
 use crate::container::CodecError;
 use std::{fmt, io};
 

@@ -1,6 +1,5 @@
 import { observePromise } from "../sync-result.js";
 
-/** Reject values that JSON would silently alter or omit. */
 export function assertJSON(value: unknown, ancestors = new Set<object>()): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number" && Number.isFinite(value) && !Object.is(value, -0)) return;

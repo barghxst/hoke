@@ -1,6 +1,3 @@
-//! WAL-only engine facade. Recovery, durable writes, and derived memory state
-//! live in separate modules while sharing one exclusively owned storage.
-
 mod changes;
 mod error;
 mod recovery;
@@ -16,12 +13,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::storage::Storage;
 use error::io_error;
 
-/// Experimental WAL-only key/value engine; no SSTables, compaction or transactions.
-///
-/// Keys and values are arbitrary bytes. Each successful mutation writes and syncs
-/// its WAL frame before becoming visible. An I/O error leaves the write outcome
-/// unknown and poisons further writes; previously published values remain readable.
-/// MemoryStorage implements the same protocol but is explicitly not durable.
 pub struct Engine<S: Storage> {
     storage: S,
     values: BTreeMap<Vec<u8>, Vec<u8>>,
@@ -43,11 +34,6 @@ impl<S: Storage> Engine<S> {
         self.values.get(key).map(Vec::as_slice)
     }
 
-    /// Return ordered live entries with a bounded total key/value payload.
-    ///
-    /// This reads the recovered in-memory WAL state without storage I/O or
-    /// mutation. A budget error discards the entire result, including any prefix
-    /// already collected. The budget excludes allocation and cursor overhead.
     pub fn scan_with_budget(
         &self,
         options: crate::ScanOptions,

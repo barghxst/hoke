@@ -2,7 +2,6 @@ import { isThenable } from "../../sync-result.js";
 import type { KVBackend } from "../backend.js";
 import { KVStorageError } from "../errors.js";
 
-/** Compatible with browser Storage without requiring DOM types. */
 export interface StringStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;

@@ -1,12 +1,3 @@
-//! Worker-only bindings over the platform-independent storage engine.
-//!
-//! Each binding module owns one domain: WAL, SST, read views, the publication
-//! journal, or the container database. Shared modules translate scan packets
-//! and synchronous JavaScript storage I/O; they do not implement persistence.
-//!
-//! The caller owns and closes the OPFS handle. No filesystem fallback is
-//! provided; JavaScript adapter exceptions become engine I/O errors.
-
 mod container;
 mod journal;
 mod limits;

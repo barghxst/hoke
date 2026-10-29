@@ -103,7 +103,7 @@ fn streaming_writer_enforces_each_format_bound_without_appending() {
 
     let mut storage = MemoryStorage::new();
     let mut writer = TableWriter::new(&mut storage).unwrap();
-    // Exercise boundary counters without writing a million records.
+
     writer.count = MAX_ENTRIES;
     assert!(matches!(
         writer.append(b"", None),
@@ -154,7 +154,7 @@ fn streaming_write_errors_are_propagated_and_prevent_finish_after_append_error()
             self.storage.sync_all()
         }
     }
-    // Placeholder, two records, index, index CRC and final header.
+
     for fail_at in 1..=6 {
         let mut storage = FailWrites {
             storage: MemoryStorage::new(),

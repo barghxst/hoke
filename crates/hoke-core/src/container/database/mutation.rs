@@ -1,4 +1,3 @@
-//! Stage a batch, publish its WAL segment, then update the derived memtable.
 use super::{ContainerDatabase, ContainerDbError, MAX_DIRTY_BYTES, MAX_SOURCES};
 use crate::container::SegmentKind;
 use crate::{
@@ -33,7 +32,7 @@ impl<S: Storage> ContainerDatabase<S> {
         if operations.is_empty() {
             return Ok(());
         }
-        // Encode and calculate the final-key delta before any persistent I/O.
+
         let mut payload = wal::encode_file_header().to_vec();
         let mut final_changes = BTreeMap::new();
         for (index, op) in operations.iter().enumerate() {

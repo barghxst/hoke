@@ -1,4 +1,3 @@
-//! KV coordination over immutable container segments (ADR 0019).
 mod maintenance;
 mod mutation;
 mod recovery;
@@ -20,7 +19,6 @@ pub use types::{ContainerDbError, ContainerStats};
 const MAX_SOURCES: usize = 64;
 const MAX_DIRTY_BYTES: usize = 32 * 1024 * 1024;
 
-/// Exclusive append-only container KV. Publication never implies physical reclamation.
 pub struct ContainerDatabase<S: Storage> {
     journal: Journal<SharedStorage<S>>,
     shared: SharedStorage<S>,

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Reproducible native benchmarks; only Python's standard library is required."""
 
 import argparse
 import datetime
@@ -60,7 +59,6 @@ def expected_counts(case, config):
 
 
 def parse_run(raw, config):
-    """Reject partial, ambiguous or malformed replicas before summarising."""
     lines = raw.splitlines()
     if len(lines) != len(CASES) + 1 or any(not line.strip() for line in lines):
         raise ValueError("expected one config and twelve measurement records")
@@ -106,7 +104,6 @@ def parse_run(raw, config):
 
 
 def quantile(samples, fraction):
-    """Linear interpolation (same definition as common inclusive quantiles)."""
     ordered = sorted(samples)
     position = (len(ordered) - 1) * fraction
     low = math.floor(position)
@@ -244,7 +241,7 @@ def execute(args):
 
 
 def parser():
-    result = argparse.ArgumentParser(description=__doc__)
+    result = argparse.ArgumentParser(description="Reproducible native benchmarks; only Python's standard library is required.")
     result.add_argument("--runs", type=int, default=3)
     for name, default in DEFAULTS.items():
         result.add_argument("--" + name.replace("_", "-"), type=int, default=default)

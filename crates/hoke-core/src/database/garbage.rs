@@ -1,11 +1,9 @@
-//! Reclaim only obsolete managed generations after synchronizing the visible manifest.
 use std::io;
 
 use crate::{directory::Directory, manifest};
 
 use super::{Database, DbError};
 
-/// An error during cleanup; published data remains usable.
 #[derive(Debug)]
 pub struct CleanupError {
     pub file: Option<String>,
@@ -18,13 +16,10 @@ pub struct CleanupReport {
     pub errors: Vec<CleanupError>,
 }
 impl<D: Directory> Database<D> {
-    /// Remove only recognised generation files absent from the active manifest.
-    /// Errors in this report concern cleanup, never rollback of published data.
     pub fn collect_garbage(&mut self) -> Result<CleanupReport, DbError> {
         self.writable()?;
         let mut report = CleanupReport::default();
-        // Also required after reopen following an uncertain rename/dirsync:
-        // persist the visible manifest before deleting files it does not name.
+
         if let Err(source) = self.directory.sync_directory() {
             report.errors.push(CleanupError {
                 file: None,
@@ -66,7 +61,7 @@ impl<D: Directory> Database<D> {
                 }),
             }
         }
-        // A removal may have taken effect even when its adapter returned Err.
+
         if let Err(source) = self.directory.sync_directory() {
             report.errors.push(CleanupError {
                 file: None,

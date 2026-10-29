@@ -1,4 +1,3 @@
-//! Initialization, manifest-based recovery, and handle lifetime.
 use crate::{
     Engine,
     directory::Directory,
@@ -15,7 +14,6 @@ impl<D: Directory> Database<D> {
         Self::open_with_options(directory, crate::DatabaseOptions::default())
     }
 
-    /// Open with per-instance pre-write flush thresholds; opening never auto-flushes.
     pub fn open_with_options(
         directory: D,
         options: crate::DatabaseOptions,

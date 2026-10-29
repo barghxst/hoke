@@ -11,7 +11,7 @@ import {
 const html = readFileSync("examples/web/index.html", "utf8");
 const inline = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
 if (!inline) throw new Error("Demo module script missing");
-// Exercise the actual example script with its imports supplied from source.
+
 const run = new Function(
   "KV",
   "LocalStorageBackend",

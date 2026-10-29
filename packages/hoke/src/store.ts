@@ -31,7 +31,7 @@ export interface StoreDefinition<T> {
   readonly version: number;
   readonly defaults: () => T;
   readonly validate: (value: unknown) => value is T;
-  /** Destination version: migrations[2] converts version 1 to version 2. */
+
   readonly migrations?: Readonly<Record<number, StoreMigration>>;
 }
 export interface Store<T> {
@@ -43,7 +43,6 @@ export interface Store<T> {
   subscribe(listener: () => void): () => void;
 }
 export interface StoreEnvelope<T = unknown> {
-  // Persisted v1 format marker remains stable across the package rename.
   readonly __stowtree: 1;
   readonly version: number;
   readonly value: T;
@@ -88,7 +87,7 @@ function checkDefinition<T>(definition: StoreDefinition<T>): void {
 
 export function defineStore<T>(definition: StoreDefinition<T>): StoreDefinition<T> {
   checkDefinition(definition);
-  // Keep a caller's later configuration mutation from changing an opened store.
+
   return Object.freeze({
     ...definition,
     ...(definition.migrations === undefined
@@ -123,7 +122,7 @@ function protectedCopy<T>(value: T): T {
       if (!item || typeof item !== "object" || visited.has(item)) return;
       visited.add(item);
       for (const child of Object.values(item)) freeze(child);
-      // Typed array elements cannot be frozen; the clone still isolates them.
+
       if (!ArrayBuffer.isView(item)) Object.freeze(item);
     }
     freeze(copy);
@@ -167,7 +166,6 @@ export function createStore<T>(kv: KVSource<unknown>, input: StoreDefinition<T>)
   let hasCache = false;
 
   function read(allowMigration: boolean): T {
-    // Always consult the backend, including after failed reads and external writes.
     const raw = kv.get(definition.key);
     if (raw === undefined) {
       cachedRaw = undefined;
@@ -190,7 +188,7 @@ export function createStore<T>(kv: KVSource<unknown>, input: StoreDefinition<T>)
           `Reopen store ${definition.key} to migrate version ${stored.version}.`,
         );
       }
-      // Verify the complete path before executing user functions.
+
       const migrations: { version: number; migrate: StoreMigration }[] = [];
       for (let version = stored.version + 1; version <= definition.version; version++) {
         const migrate = definition.migrations?.[version];
@@ -228,7 +226,7 @@ export function createStore<T>(kv: KVSource<unknown>, input: StoreDefinition<T>)
         version: definition.version,
         value,
       } satisfies StoreEnvelope<T>);
-      // Read back the actual backend value: serialization and listeners can change it.
+
       return read(false);
     }
     validateValue(definition, stored.value, "invalid-value");
@@ -239,7 +237,6 @@ export function createStore<T>(kv: KVSource<unknown>, input: StoreDefinition<T>)
   }
 
   function set(value: T): void {
-    // Refuse to overwrite externally replaced incompatible or corrupt data.
     read(false);
     validateValue(definition, value, "invalid-value");
     kv.set(definition.key, {

@@ -1,5 +1,3 @@
-//! Exclusive WAL engine binding.
-
 use hoke_core::Engine;
 
 use wasm_bindgen::prelude::*;
@@ -8,15 +6,12 @@ use crate::binding_error;
 use crate::scan::{MAX_PACKET_BYTES, pack_live_rows, scan_options};
 use crate::storage::JsStorage;
 
-/// An exclusive WAL engine over a synchronous Worker-side byte adapter.
-/// The adapter's handle must remain open until this engine is closed/freed.
 #[wasm_bindgen]
 pub struct WasmWal {
     engine: Option<Engine<JsStorage>>,
 }
 
 impl WasmWal {
-    /// Borrow the current overlay without exposing ownership to read views.
     pub(crate) fn engine(&self) -> Result<&Engine<JsStorage>, JsError> {
         self.engine
             .as_ref()
@@ -43,8 +38,6 @@ impl WasmWal {
         Ok(engine.get(key).map(<[u8]>::to_vec))
     }
 
-    /// Packed ephemeral scan response, independent of the durable WAL format.
-    /// Flags: bit 0 excludes start, bit 1 includes end, bit 2 reverses order.
     pub fn scan(
         &self,
         start: Option<Vec<u8>>,
@@ -80,8 +73,6 @@ impl WasmWal {
             .map_err(binding_error)
     }
 
-    /// Synchronize and drop the engine even when final synchronization fails.
-    /// This does not close the JS handle; its Worker owner must do so in finally.
     pub fn close(&mut self) -> Result<(), JsError> {
         match self.engine.take() {
             Some(engine) => engine.close().map_err(binding_error),

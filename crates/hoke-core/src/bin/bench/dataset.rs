@@ -1,5 +1,3 @@
-//! Deterministic keys, values, random order, and batches, prepared before timing.
-
 use hoke_core::BatchOperation;
 
 use super::config::Config;

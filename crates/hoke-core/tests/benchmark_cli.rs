@@ -56,9 +56,6 @@ fn invoke(path: &Path, arguments: &[String]) -> Output {
         .unwrap()
 }
 
-// The protocol's fields have fixed ASCII names; the Python runner separately
-// validates complete JSON syntax and schema. These helpers inspect numeric
-// invariants without adding a JSON dependency to the Rust test suite.
 fn field<'a>(record: &'a str, name: &str) -> &'a str {
     let marker = format!("\"{name}\"");
     let (_, rest) = record.split_once(&marker).unwrap_or_else(|| {
@@ -254,7 +251,7 @@ fn invalid_arguments_leave_existing_empty_directory_untouched() {
         arguments.extend(suffix.into_iter().map(String::from));
         cases.push(arguments);
     }
-    // Individually legal parameters still must satisfy the aggregate resource caps.
+
     for (keys, value_bytes, batch_size) in [
         ("4000", "20000", "3"),
         ("8", "16777216", "3"),

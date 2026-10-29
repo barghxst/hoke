@@ -1,5 +1,3 @@
-//! Flush/recovery fault tests. The byte backend models visible file operations,
-//! not loss of power or a filesystem's durability guarantees.
 use hoke_core::directory::Directory;
 use hoke_core::storage::Storage;
 use hoke_core::{BatchOperation, Database, DatabaseOptions, ScanOptions};

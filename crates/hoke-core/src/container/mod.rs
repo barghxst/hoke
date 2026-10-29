@@ -1,4 +1,3 @@
-//! Append-only container engine and publication journal (ADR 0018–0019).
 pub(crate) mod codec;
 mod database;
 mod journal;

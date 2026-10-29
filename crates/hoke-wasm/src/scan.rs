@@ -1,5 +1,3 @@
-//! Shared scan request validation and transient live-row response framing.
-
 use std::ops::Bound;
 
 use hoke_core::ScanOptions;

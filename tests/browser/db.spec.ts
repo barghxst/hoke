@@ -53,7 +53,6 @@ async function writeWal(page: Page, name: string, bytes: number[]) {
 }
 
 async function reopen(page: Page, name: string) {
-  // Worker termination releases the OPFS owner asynchronously in Chromium.
   await expect
     .poll(async () =>
       page.evaluate(async (name) => {
@@ -198,7 +197,7 @@ for (const kind of ["checksum", "future-header"] as const) {
     if (kind === "checksum") bytes[bytes.length - 1] = (bytes.at(-1) ?? 0) ^ 1;
     else {
       bytes[8] = 2;
-      // A valid checksum distinguishes future format rejection from corruption.
+
       let crc = 0xffff_ffff;
       for (const byte of bytes.slice(0, 12)) {
         crc ^= byte;
@@ -343,9 +342,7 @@ test("a write failure preserves old ACK bytes and prevents later mutation ACKs",
       const value = Array.from((await db.get(new Uint8Array([1]))) ?? []);
       try {
         await db.close();
-      } catch {
-        /* Poisoned close is expected. */
-      }
+      } catch {}
       return { codes, value };
     }),
   ).toEqual({ codes: ["ENGINE", "ENGINE"], value: [7] });
@@ -495,7 +492,7 @@ test("response transport failure releases the OPFS owner and preserves an unknow
           },
           { once: true },
         );
-        // No response can reach the caller: both the success and error transport fail.
+
         h.raw.postMessage({
           version: protocolVersion,
           id: 2,
@@ -511,7 +508,7 @@ test("response transport failure releases the OPFS owner and preserves an unknow
     failure: expect.stringContaining("injected response transport failure"),
   });
   await page.unroute("**/packages/hoke/dist/db/worker.js");
-  // Deliberately keep the failed worker alive until a new owner proves cleanup.
+
   await reopen(page, "transport-fail");
   expect(
     await page.evaluate(async () => {

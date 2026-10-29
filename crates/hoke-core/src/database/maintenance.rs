@@ -1,4 +1,3 @@
-//! Flush dirty state and compact every active run before reclaiming obsolete files.
 use crate::{
     Engine,
     directory::Directory,
@@ -23,11 +22,9 @@ impl<D: Directory> Database<D> {
         if entries.is_empty() {
             return Ok(());
         }
-        // Capacity validation is pure and leaves the existing delta writable.
+
         sstable::validate_entries(&entries).map_err(DbError::Sst)?;
         if let Err(error) = self.flush_inner(&entries) {
-            // Table/generation limits precede file creation. IO failures can
-            // have an unknown publication outcome and must still poison.
             if !matches!(&error, DbError::Limit(_)) {
                 self.poisoned = true;
             }
@@ -35,9 +32,7 @@ impl<D: Directory> Database<D> {
         }
         Ok(())
     }
-    /// Merge every active SST and WAL change, dropping covered tombstones.
-    /// Publication failures poison mutations until reopen. Cleanup failures are
-    /// reported separately after publication and do not roll back the new state.
+
     pub fn compact(&mut self) -> Result<CompactionReport, DbError> {
         self.writable()?;
         let tables_before = self.tables.len();
@@ -46,7 +41,6 @@ impl<D: Directory> Database<D> {
             || self.tables.iter().any(SSTable::has_tombstones))
             && let Err(error) = self.compact_inner()
         {
-            // The only Limit here is generation exhaustion, before creation.
             if !matches!(&error, DbError::Limit(_)) {
                 self.poisoned = true;
             }
@@ -98,7 +92,7 @@ impl<D: Directory> Database<D> {
             tables: if count > 0 { vec![generation] } else { vec![] },
         };
         publish(&self.directory, &next)?;
-        // Close old handles before unlinking superseded files.
+
         self.tables = table.into_iter().collect();
         drop(std::mem::replace(&mut self.wal, new_wal));
         self.manifest = next;

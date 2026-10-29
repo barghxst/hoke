@@ -3,7 +3,6 @@ import { test as base, expect, type Page } from "@playwright/test";
 const persistedKey = 'stowtree:["store-demo","settings"]';
 const absentRecord = "Запись отсутствует — используются defaults.";
 
-// Fail each scenario if the actual module import or an event handler throws.
 const test = base.extend<{ pageErrors: Error[] }>({
   pageErrors: [
     async ({ page }, use) => {

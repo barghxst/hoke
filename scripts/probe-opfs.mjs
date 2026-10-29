@@ -4,7 +4,6 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { chromium } from "@playwright/test";
 
-// A disposable context and an empty, dedicated origin; never use a user profile.
 const server = createServer((_request, response) => {
   response.writeHead(200, { "Content-Type": "text/html" });
   response.end("<!doctype html><title>Isolated OPFS capability probe</title>");

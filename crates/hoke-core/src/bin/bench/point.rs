@@ -1,5 +1,3 @@
-//! Sequential writes, random updates/reads, WAL reopen, scans, flush, and GC.
-
 use std::collections::BTreeMap;
 use std::path::Path;
 

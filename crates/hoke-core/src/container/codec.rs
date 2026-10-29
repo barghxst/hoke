@@ -1,5 +1,3 @@
-//! Container v1 framing and bounded root metadata (ADR 0018).
-
 use std::fmt;
 
 pub const FILE_HEADER_LEN: usize = 32;

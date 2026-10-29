@@ -1,4 +1,3 @@
-//! Checked I/O and streaming record checksums.
 use super::JournalError;
 use crate::container::CodecError;
 use crate::container::{
@@ -56,7 +55,7 @@ pub(super) fn payload_buffer(length: u64) -> Result<Vec<u8>, JournalError> {
     bytes.resize(length, 0);
     Ok(bytes)
 }
-/// Validate a complete record without allocating a segment payload during recovery.
+
 pub(super) fn checksum<S: Storage>(
     storage: &mut S,
     offset: u64,

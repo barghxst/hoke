@@ -1,5 +1,3 @@
-//! Flush/recovery fault tests. The byte backend models visible file operations,
-//! not loss of power or a filesystem's durability guarantees.
 use hoke_core::Database;
 use hoke_core::directory::Directory;
 use hoke_core::storage::Storage;
@@ -483,7 +481,6 @@ fn write_errors_after_all_bytes_are_visible_recover_confirmed_changes() {
 
 #[test]
 fn truncated_referenced_wal_is_rejected_without_repair_or_initialization() {
-    // WAL v1 has a 16-byte header; none of its incomplete prefixes is a new WAL.
     for length in 0..16 {
         let directory = SharedDir::default();
         let mut database = seed(&directory);

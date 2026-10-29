@@ -1,4 +1,3 @@
-//! Execute directory-backed commands and report publication versus cleanup outcomes.
 use std::{error::Error, path::PathBuf};
 
 use hoke_core::{

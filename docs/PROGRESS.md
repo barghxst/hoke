@@ -377,3 +377,10 @@ ADR0019 фиксирует payload reuse и coordinator. Браузерные un
 Публичный memory backend исключён. Входы `kv/web` и `kv/native` разделены, index.ts содержит только экспорты. Тесты KV вынесены из runtime. SecureKV, шифрование, TTL и async backend не входят в этот срез. Причины и альтернативы — ADR0022.
 
 Проверки: `pnpm check` прошёл — 353 JS, 60 actual-WASM, 254 Rust и 11 Python tests, tarball/SSR/native declarations и 9 demo-launcher tests. Настоящий Chrome: 96 tests прошли. Дополнительно проверено отклонение случайных async backend без ложного уведомления и unhandled rejection. По уточнению пользователя поля/методы классов используют TypeScript private; промежуточный shared barrel удалён, фасады содержат явные экспорты. Нативная сборка и выполнение на настоящих iOS/Android пока не проверены; mock MMKV и проверки типов не заменяют device tests.
+
+
+## Удаление комментариев / 29 октября
+
+По запросу пользователя удалены поясняющие комментарии из Rust, JS/TS/MJS, Python и примеров документации. Сохранены исполняемые shebang и служебные директивы TypeScript, Vitest и Biome. Лексическая проверка Rust и сравнение AST JS/TS подтвердили сохранение кода; CLI description benchmark runner перенесено из docstring в аргумент argparse, чтобы сохранить help.
+
+`pnpm check` прошёл: 353 JS, 60 actual-WASM, 254 Rust и 11 Python tests; tarball и 9 demo-launcher tests также прошли. Настоящий Chrome: 96 tests прошли.

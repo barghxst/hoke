@@ -55,7 +55,6 @@ function bound(value: unknown): ScanBound {
   return { key: bytes(input.key), inclusive: input.inclusive };
 }
 
-/** Copy call inputs before the first asynchronous boundary. */
 export function normalizeScanOptions(value: unknown = {}): NormalizedScanOptions {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError("Expected scan options object");

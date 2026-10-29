@@ -1,9 +1,3 @@
-//! Immutable, indexed sorted runs shared by native and platform adapters.
-//!
-//! This module reads and writes the existing SST v1 format. It does not publish
-//! files or make them durable: callers must finish writing, flush and synchronize
-//! their storage, then publish the reference using their own commit protocol.
-//! Keep storage backing an open table immutable for the table's entire lifetime.
 mod format;
 mod merge;
 mod reader;
@@ -20,14 +14,12 @@ use std::{error::Error, fmt, io};
 
 use crate::wal;
 
-/// Maximum number of records, including tombstones, in one table.
 pub const MAX_ENTRIES: usize = 1_000_000;
-/// Maximum encoded key-index size, excluding its trailing checksum.
+
 pub const MAX_INDEX_BYTES: usize = 64 * 1024 * 1024;
-/// Maximum number of immutable runs accepted by one streaming merge.
+
 pub const MAX_MERGE_SOURCES: usize = 64;
 
-/// Storage, validation, allocation, or record-codec failure.
 #[derive(Debug)]
 pub enum SstError {
     Io(io::Error),

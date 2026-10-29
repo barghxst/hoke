@@ -1,5 +1,3 @@
-//! WAL engine errors and contextual storage error conversion.
-
 use std::{fmt, io};
 
 #[derive(Debug)]

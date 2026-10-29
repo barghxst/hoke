@@ -69,8 +69,6 @@ it("connects selectors to persistent snapshots, reloads updates and resets to st
   expect(container.textContent).toBe("1");
   expect(renders).toBe(initialRenders + 1);
 
-  // A new backend/parser/store must observe the persisted envelope, rather
-  // than reading a shared in-memory snapshot from the original instance.
   const reopened = openPersistedStore().store;
   expect(reopened.getSnapshot()).toEqual({ count: 1, theme: "dark" });
   expect(reopened.getSnapshot()).toBe(reopened.getSnapshot());

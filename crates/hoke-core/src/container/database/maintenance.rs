@@ -1,4 +1,3 @@
-//! Flush/compaction candidates and atomic root publication.
 use super::{
     ContainerDatabase, ContainerDbError, MAX_SOURCES, recovery::empty_memory,
     staging::CappedStorage,
@@ -86,7 +85,7 @@ impl<S: Storage> ContainerDatabase<S> {
         } else {
             self.journal.root().unwrap().tables.clone()
         };
-        // Prepare all list capacity before appending persistent output.
+
         if bytes.is_some() {
             refs.try_reserve(1)
                 .map_err(|_| ContainerDbError::Data(DbError::AllocationFailed))?;
@@ -114,7 +113,7 @@ impl<S: Storage> ContainerDatabase<S> {
             refs.push(reference);
         }
         let committed = self.journal.commit(&refs, &[]);
-        // Output has already been appended: any publication failure requires reopen.
+
         if committed.is_err() {
             self.poisoned = true;
         }

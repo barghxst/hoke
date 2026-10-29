@@ -1,4 +1,3 @@
-//! A cwd change is process-global, so the regression runs in an isolated child.
 #![cfg(unix)]
 
 use hoke_core::{Database, NativeDirectory};
@@ -73,8 +72,6 @@ fn cwd_child() {
     db.compact().unwrap();
     db.close().unwrap();
 
-    // The second database remained locked throughout; no publication or GC
-    // belonging to the first database may redirect into it.
     assert_eq!(
         other_db.get(b"other").unwrap(),
         Some(b"must remain".to_vec())

@@ -9,7 +9,6 @@ import {
   normalizeScanOptions,
 } from "./scan.js";
 
-/** A byte-key namespace sharing its database's ownership and lifetime. */
 export interface DBCollection {
   get(key: Uint8Array, options?: DBOperationOptions): Promise<Uint8Array | undefined>;
   put(key: Uint8Array, value: Uint8Array, options?: DBOperationOptions): Promise<void>;

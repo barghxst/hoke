@@ -1,4 +1,3 @@
-//! Ordered reads across immutable runs and the mutable WAL, using real files.
 #![cfg(unix)]
 use hoke_core::directory::Directory;
 use hoke_core::storage::{FileStorage, Storage};
@@ -539,8 +538,7 @@ fn winning_tombstone_is_validated_but_shadowed_tombstone_is_not_read() {
     db.close().unwrap();
     let path = &temp.tables()[1];
     let mut bytes = fs::read(path).unwrap();
-    // SST v1 has a 32-byte header; the first frame's 28-byte header is
-    // followed by the key. Keep both headers and the index valid at open.
+
     bytes[32 + 28] ^= 0x80;
     fs::write(path, bytes).unwrap();
     let mut db = temp.open();

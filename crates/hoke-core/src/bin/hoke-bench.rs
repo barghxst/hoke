@@ -1,5 +1,3 @@
-//! Reproducible native API benchmark; see docs/adr/0009-native-benchmarks.md.
-
 mod bench;
 
 use std::fmt::Write as _;

@@ -1,4 +1,3 @@
-//! Immutable table index validation and lazy, checksum-validated point reads.
 use std::ops::Bound;
 
 use crate::{
@@ -11,14 +10,12 @@ use super::{
     format::{HEADER_LEN, MAGIC, VERSION, buffer, copy, read_exact, u32_at, u64_at},
 };
 
-/// Result of a lookup within a single immutable table.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Lookup {
-    /// The key does not occur in this table.
     Missing,
-    /// The table contains a tombstone; older tables must not supply a value.
+
     Deleted,
-    /// An independently owned value read and validated from the table.
+
     Value(Vec<u8>),
 }
 struct Entry {
@@ -26,11 +23,7 @@ struct Entry {
     offset: u64,
     frame_len: usize,
 }
-/// Immutable table reader owning its storage handle and bounded in-memory index.
-///
-/// The caller must prevent writes through other handles while this reader exists.
-/// Opening validates the header, index, and record headers; payload checksums are
-/// validated lazily by [`SSTable::get`], not by a full-table scrub at open time.
+
 pub struct SSTable<S: Storage> {
     storage: S,
     index: Vec<Entry>,
@@ -38,8 +31,6 @@ pub struct SSTable<S: Storage> {
 }
 
 impl<S: Storage> SSTable<S> {
-    /// Open and validate an existing immutable table, taking ownership of storage.
-    /// This does not create, repair, synchronize, or publish a table.
     pub fn open(mut storage: S) -> Result<Self, SstError> {
         let file_len = storage.len()?;
         if file_len < (HEADER_LEN + 4) as u64 {
@@ -138,27 +129,22 @@ impl<S: Storage> SSTable<S> {
         })
     }
 
-    /// Number of indexed records, including tombstones.
     pub fn len(&self) -> usize {
         self.index.len()
     }
 
-    /// Whether the table contains no records, including tombstones.
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
     }
 
-    /// Whether validated record headers include any delete operations.
     pub fn has_tombstones(&self) -> bool {
         self.has_tombstones
     }
 
-    /// Borrow a key from the loaded index, including keys of tombstones.
     pub fn key_at(&self, position: usize) -> Option<&[u8]> {
         self.index.get(position).map(|entry| entry.key.as_slice())
     }
 
-    /// Locate a range using index metadata only, without reading record frames.
     pub fn range_positions(
         &self,
         start: &Bound<Vec<u8>>,
@@ -177,8 +163,6 @@ impl<S: Storage> SSTable<S> {
         start..end.max(start)
     }
 
-    /// Read a key and validate its complete record checksum against the index.
-    /// A missing key requires no storage read; a returned value is an owned copy.
     pub fn get(&mut self, key: &[u8]) -> Result<Lookup, SstError> {
         let position = match self
             .index

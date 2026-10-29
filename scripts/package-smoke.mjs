@@ -112,7 +112,7 @@ try {
     reopened.reset();
     assert.equal(reopened.getSnapshot(), 0);
 
-    // A package rename must still read and update pre-rename persisted records.
+
     const legacyKey = 'stowtree:["rename-compat","counter"]';
     const persisted = new Map([[legacyKey, JSON.stringify({ __stowtree: 1, version: 1, value: 41 })]]);
     const backend = {
@@ -130,7 +130,6 @@ try {
   await writeFile(join(directory, "consumer.mjs"), consumer);
   run("node", ["consumer.mjs"], directory);
 
-  // Declarations must work for a consumer without this workspace's @types/node.
   await writeFile(
     join(directory, "consumer.ts"),
     `
@@ -172,7 +171,7 @@ try {
       await collection.get(new Uint8Array(), options);
       await collection.put(new Uint8Array(), new Uint8Array(), options);
       await collection.delete(new Uint8Array(), options);
-      // @ts-expect-error Cancellation requires a signal, not a boolean.
+      // @ts-expect-error
       db.get(new Uint8Array(), { signal: true });
       const range: DBRange = { prefix: Uint8Array.of(1) };
       const listener: DBListener = () => {};
@@ -185,13 +184,13 @@ try {
       const committed: true = failure.committed;
       const code: 'SUBSCRIBER_FAILED' = failure.code;
       void committed; void code;
-      // @ts-expect-error Ranges do not accept scan pagination options.
+      // @ts-expect-error
       db.subscribeRange({ limit: 1 }, listener);
-      // @ts-expect-error Subscription keys are bytes.
+      // @ts-expect-error
       collection.subscribe('key', listener);
-      // @ts-expect-error Bounds require an explicit inclusive boolean.
+      // @ts-expect-error
       db.scan({ start: { key: new Uint8Array() } });
-      // @ts-expect-error Collection values are bytes.
+      // @ts-expect-error
       collection.put(new Uint8Array(), 'invalid');
       return rows.length + relative.length;
     }
@@ -205,9 +204,9 @@ try {
       const rows: Array<{key: string; value: Task}> = await tasks.list({ prefix: 'o', limit: 10 });
       await tasks.writeBatch([{type: 'set', key: 'two', value: {text: 'two', done: false}}, {type: 'delete', key: 'one'}]);
       tasks.subscribeRange({ prefix: 'o' }, () => {})();
-      // @ts-expect-error Values follow the collection's runtime schema type.
+      // @ts-expect-error
       tasks.set('bad', { text: 1, done: false });
-      // @ts-expect-error JSON collection keys are strings.
+      // @ts-expect-error
       tasks.get(new Uint8Array());
       const error = new DocumentError('INVALID_DATA', 'bad JSON');
       void task; void rows; void error;
@@ -223,7 +222,7 @@ try {
     const store = createStore(new KV<unknown>({ name: "test", backend: new TestBackend() }), definition);
     const count: number = store.getSnapshot().count;
     store.set({ count: count + 1 });
-    // @ts-expect-error The store must reject a wrong value type.
+    // @ts-expect-error
     store.set({ count: 'wrong' });
   `,
   );
@@ -253,7 +252,7 @@ try {
     kv.set('theme', 'dark');
     const theme: string | undefined = kv.get('theme');
     void theme;
-    // @ts-expect-error Platform exports must select the native facade.
+    // @ts-expect-error
     import { LocalStorageBackend } from 'hoke/kv';
   `,
   );
@@ -339,7 +338,7 @@ try {
       if (state.status === 'success') { const count: number | undefined = state.value?.count; return count; }
       return state.status;
     }
-    // @ts-expect-error Selector must see the declared store value type.
+    // @ts-expect-error
     useStore(store, value => value.missing);
   `,
   );

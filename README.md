@@ -69,8 +69,8 @@ const isTask = (value: unknown): value is Task =>
 const db = await openDatabase("app");
 const tasks = db.collection("tasks", { validate: isTask });
 await tasks.set("first", { text: "Попробовать Hoke", done: false });
-const task = await tasks.get("first"); // Task | undefined
-const rows = await tasks.list({ limit: 100 }); // { key: string; value: Task }[]
+const task = await tasks.get("first");
+const rows = await tasks.list({ limit: 100 });
 await db.close();
 ```
 

@@ -7,10 +7,8 @@ use crate::database::DbError;
 use crate::sstable::{Lookup, SSTable};
 use crate::storage::Storage;
 
-/// Owned byte-key/value pair, independent of the database after the scan returns.
 pub type KeyValue = (Vec<u8>, Vec<u8>);
 
-/// Bounds and prefix are intersected. Default returns at most 100 live keys.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanOptions {
     pub start: Bound<Vec<u8>>,
@@ -31,7 +29,6 @@ impl Default for ScanOptions {
     }
 }
 impl ScanOptions {
-    /// Reject reversed explicit bounds without reading storage.
     pub fn validate(&self) -> Result<(), DbError> {
         if let (Some(start), Some(end)) = (bound_key(&self.start), bound_key(&self.end))
             && start > end
@@ -152,7 +149,6 @@ pub(crate) fn scan_sources<S: Storage>(
     Ok(result)
 }
 
-// Share the ordering/version resolution without materialising compaction values.
 pub(crate) fn visit_sources<W: Storage, T: Storage>(
     wal: &Engine<W>,
     tables: &mut [SSTable<T>],
@@ -200,8 +196,7 @@ pub(crate) fn visit_sources<W: Storage, T: Storage>(
         let key = ordered.into_bytes();
         let mut winner = source;
         advance(source, &mut cursors, tables, &mut heap, options.reverse);
-        // Resolve all older versions before reading a value. Newer sources win,
-        // independent of traversal direction. Each source has unique sorted keys.
+
         while heap.peek().is_some_and(|(head, _)| head.bytes() == key) {
             let Some((_, duplicate)) = heap.pop() else {
                 break;

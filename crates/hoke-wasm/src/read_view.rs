@@ -1,5 +1,3 @@
-//! Live WAL overlay over immutable SST sources.
-
 use hoke_core::read::{get_from_sources, scan_sources_with_budget};
 use hoke_core::sstable::{MAX_MERGE_SOURCES, SSTable};
 
@@ -11,8 +9,6 @@ use crate::scan::{indexed_scan_options, pack_live_rows};
 use crate::storage::JsStorage;
 use crate::wal::WasmWal;
 
-/// A live WAL overlay over immutable SST sources ordered oldest to newest.
-/// Table indexes are owned here; adapter handles remain owned by the caller.
 #[wasm_bindgen]
 pub struct WasmReadView {
     tables: Option<Vec<SSTable<JsStorage>>>,
@@ -49,7 +45,6 @@ impl WasmReadView {
         get_from_sources(engine, tables, key).map_err(binding_error)
     }
 
-    /// Packed live rows using the same framing and flags as WasmWal.scan.
     pub fn scan(
         &mut self,
         wal: &WasmWal,
@@ -70,7 +65,6 @@ impl WasmReadView {
         pack_live_rows(rows)
     }
 
-    /// Drop immutable indexes without closing caller-owned JS handles.
     pub fn close(&mut self) {
         self.tables.take();
     }

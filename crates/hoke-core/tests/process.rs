@@ -1,5 +1,3 @@
-//! Real process termination checks on Unix (SIGKILL, without Rust destructors).
-//! These demonstrate process-crash recovery, not power-loss durability.
 #![cfg(unix)]
 
 use std::fs;
@@ -67,8 +65,6 @@ impl RunningChild {
     fn await_ready(&mut self, directory: &TempDirectory) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            // A child that exits early (including an unmatched test filter) must
-            // fail immediately instead of masquerading as a successful signal.
             if let Some(status) = self.0.try_wait().unwrap() {
                 panic!("child exited before termination was requested: {status}");
             }
@@ -96,7 +92,6 @@ impl RunningChild {
 
 impl Drop for RunningChild {
     fn drop(&mut self) {
-        // Also executes during assertion unwinding, before the directory cleanup.
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -129,8 +124,7 @@ impl Storage for InterruptedAppend {
         self.file
             .write_all_at(offset, &bytes[..INTERRUPTED_BYTES])?;
         self.file.flush()?;
-        // Make the injected prefix observable before signaling. Engine never
-        // receives an Ok for the full append and never publishes this mutation.
+
         self.file.sync_all()?;
         signal_and_wait(&self.directory);
     }

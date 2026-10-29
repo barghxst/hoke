@@ -1,4 +1,3 @@
-//! Native database failures, including uncertain publication outcomes.
 use std::{fmt, io};
 
 use crate::{Error, sstable::SstError};

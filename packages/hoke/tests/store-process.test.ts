@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, expect, it } from "vitest";
 
-// Compile current source in isolation; never depend on or rewrite the dist build.
 const buildDir = mkdtempSync(join(tmpdir(), "hoke-store-process-"));
 try {
   const compiler = spawnSync(

@@ -1,4 +1,3 @@
-//! Small UTF-8 CLI for the experimental single-file container database.
 use std::{error::Error, io, path::PathBuf, process::ExitCode};
 
 use hoke_core::{
@@ -71,7 +70,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("info") if args.len() == 1 => Command::Info,
         _ => return Err(invalid().into()),
     };
-    // Parse and validate the complete command before creating or locking a file.
+
     if let Command::Batch(operations) = &command {
         validate_batch(operations)?;
     }

@@ -19,7 +19,7 @@ type Pending = {
   settled: boolean;
   detach?: () => void;
 };
-/** Owns one Worker connection and settles each dispatched request exactly once. */
+
 export class WorkerSession {
   private state: "opening" | "open" | "closing" | "closed" = "opening";
   private nextId = 1;
@@ -90,16 +90,13 @@ export class WorkerSession {
     }
   }
 
-  /** Mark settled before calling user-owned signal methods, which may reenter. */
   private finish(id: number, pending: Pending): void {
     pending.settled = true;
     this.pending.delete(id);
     clearTimeout(pending.timer);
     try {
       pending.detach?.();
-    } catch {
-      // A broken custom signal cannot change an ACK or prevent pending cleanup.
-    }
+    } catch {}
   }
 
   request(command: Command, signal?: Cancellation): Promise<Result> {

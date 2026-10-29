@@ -6,7 +6,6 @@ import { compareBytes, type DBScanOptions, normalizeScanOptions } from "./scan.j
 export type DBRange = Pick<DBScanOptions, "start" | "end" | "prefix">;
 export type DBListener = () => void;
 
-/** Subscriber failures do not undo the already committed database mutation. */
 export class DBNotificationError extends AggregateError {
   readonly code = "SUBSCRIBER_FAILED";
   readonly committed = true;
@@ -37,7 +36,7 @@ export function normalizeWatchRange(range: DBRange): DBRange {
     if (typeof range !== "object" || range === null || Array.isArray(range)) throw invalid();
     if (Reflect.ownKeys(range).some((key) => key !== "start" && key !== "end" && key !== "prefix"))
       throw invalid();
-    // Pass only range fields: subscriptions never inherit scan ordering or limits.
+
     const normalized = normalizeScanOptions({
       start: range.start,
       end: range.end,
@@ -53,7 +52,6 @@ export function normalizeWatchRange(range: DBRange): DBRange {
   }
 }
 
-/** Connection-local synchronous invalidations, in global registration order. */
 export class WatchRegistry {
   private readonly subscriptions = new Set<Subscription>();
 
@@ -86,8 +84,6 @@ export class WatchRegistry {
   }
 
   notifyMany(keys: readonly Uint8Array[]): DBNotificationError | undefined {
-    // Determine matching registrations before invoking user code. Reentrant calls
-    // get their own snapshot; additions cannot join the event already in flight.
     const snapshot = [...this.subscriptions].filter((entry) =>
       keys.some((key) => entry.matches(key)),
     );

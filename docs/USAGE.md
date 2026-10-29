@@ -40,7 +40,7 @@ pnpm demo
 ```ts
 import { KV } from "hoke/kv";
 
-const kv = new KV<number>({ name: "counters" }); // постоянный платформенный backend
+const kv = new KV<number>({ name: "counters" });
 const unsubscribe = kv.subscribe("count", () => console.log(kv.get("count")));
 kv.set("count", 1);
 kv.delete("count");
@@ -131,8 +131,6 @@ const settings = defineStore<Settings>({
   validate: isSettings,
 });
 
-// KV читает JSON/envelopes; схему значения проверяет Store.
-// На уровне KV не ограничиваем данные текущей Settings: миграции читают старую схему.
 const kv = new KV({ name: "my-app" });
 const store = createStore(kv, settings);
 const unsubscribe = store.subscribe(() => console.log(store.getSnapshot()));
@@ -188,11 +186,6 @@ function Counter() {
     count,
   );
 }
-
-// Полный snapshot:
-// const settings = useValue(store);
-// Объектный selector с собственным сравнением:
-// const selected = useStore(store, s => ({ theme: s.theme }), (a, b) => a.theme === b.theme);
 ```
 
 Создавайте KV/store вне рендера компонента либо сохраняйте экземпляр на весь lifecycle. По умолчанию селекторы сравниваются через Object.is; изменение невыбранного поля не перерисовывает потребителя. Для selector, создающего новый объект, можно передать isEqual.

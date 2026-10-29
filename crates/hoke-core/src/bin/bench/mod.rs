@@ -1,5 +1,3 @@
-//! Native benchmark orchestration; fixtures and validation stay outside timers.
-
 mod batch;
 mod config;
 mod dataset;
@@ -48,8 +46,7 @@ pub(super) fn run(c: &Config) -> Result<Vec<Measurement>> {
     let path = c.dir.join("point");
     let batch_path = c.dir.join("batch");
     let mut output = Vec::new();
-    // The original combined workload retained its point model through the batch
-    // phase. Keep that memory lifetime when separating the scenario functions.
+
     let _point_model = point::run(c, &data, &path, &mut output)?;
     batch::run(c, &data, &batch_path, &mut output)?;
     Ok(output)

@@ -1,4 +1,3 @@
-//! Full compaction and obsolete-file reclamation against real, exclusively locked files.
 #![cfg(unix)]
 use hoke_core::directory::Directory;
 use hoke_core::storage::{FileStorage, Storage};
@@ -87,7 +86,7 @@ fn compaction_preserves_more_than_default_scan_limit_and_reclaims_old_values() {
         }
     }
     db.flush().unwrap();
-    // The compacted state must include writes that have never reached an SST.
+
     for key in [vec![], vec![0], vec![255], vec![255, 255]] {
         db.put(&key, b"newest").unwrap();
         model.insert(key, b"newest".to_vec());
@@ -219,7 +218,7 @@ fn gc_removes_only_strict_obsolete_managed_names_and_preserves_active_state() {
         fs::write(temp.0.join(name), b"incomplete orphan").unwrap();
     }
     let report = db.collect_garbage().unwrap();
-    // One WAL from the prior flush plus three explicitly created orphans.
+
     assert_eq!(report.removed_files, 4);
     assert!(report.errors.is_empty());
     for name in orphaned {
@@ -674,7 +673,7 @@ fn sole_sst_with_live_values_and_tombstones_rewrites_once_without_tombstones() {
         .filter(|(name, _)| name.ends_with(".sst"))
         .collect();
     assert_eq!(tables.len(), 1);
-    // SST v1's record count must contain the one live key, with no tombstones.
+
     assert_eq!(
         u64::from_le_bytes(tables[0].1[12..20].try_into().unwrap()),
         1

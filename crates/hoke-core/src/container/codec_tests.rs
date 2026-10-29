@@ -22,7 +22,6 @@ fn sample_root() -> Root {
 
 #[test]
 fn file_and_record_headers_match_independent_golden_bytes() {
-    // CRC fixtures computed independently with Python zlib.crc32.
     let file = encode_file_header();
     assert_eq!(
         hex(&file),
@@ -281,7 +280,7 @@ fn root_rejects_duplicate_offsets_even_across_lists_and_wrong_kinds() {
             root.wal.push(root.wal[0]);
         }
         assert!(encode_root(&root).is_err());
-        // Bypass the encoder to check malformed bytes on the read path too.
+
         let mut bytes = encode_root(&original).unwrap();
         let (count_offset, reference_offset) = if duplicate_tables {
             (8, ROOT_PREFIX_LEN)

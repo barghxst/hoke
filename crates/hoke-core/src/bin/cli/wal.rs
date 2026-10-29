@@ -1,4 +1,3 @@
-//! Execute the WAL-only command set and report recovered records.
 use std::{error::Error, path::PathBuf};
 
 use hoke_core::{Engine, storage::FileStorage};

@@ -1,5 +1,3 @@
-//! Container-backed database operations and transient batch request decoding.
-
 use hoke_core::BatchOperation;
 use hoke_core::container::ContainerDatabase;
 
@@ -10,14 +8,11 @@ use crate::limits::{MAX_KEY_BYTES, MAX_PACKET_BYTES, MAX_VALUE_BYTES};
 use crate::scan::{indexed_scan_options, pack_live_rows};
 use crate::storage::JsStorage;
 
-/// Container-backed KV coordinator over a caller-owned synchronous handle.
-/// Mutations publish roots; close neither commits nor closes the JS handle.
 #[wasm_bindgen]
 pub struct WasmContainerDb {
     database: Option<ContainerDatabase<JsStorage>>,
 }
 
-// This framing belongs to the JS/WASM call boundary, never to persistent data.
 fn container_batch(packet: &[u8]) -> Result<Vec<BatchOperation>, JsError> {
     let count = packet
         .get(..4)
@@ -121,7 +116,6 @@ impl WasmContainerDb {
         database.write_batch(&operations).map_err(binding_error)
     }
 
-    /// Same packed LIVE rows and scan flags as WasmWal.scan.
     pub fn scan(
         &mut self,
         start: Option<Vec<u8>>,
@@ -156,7 +150,6 @@ impl WasmContainerDb {
             .map_err(binding_error)
     }
 
-    /// Five u64LE counters: generation, SSTs, WALs, dirty entries, dirty bytes.
     pub fn stats(&self) -> Result<Vec<u8>, JsError> {
         let stats = self
             .database

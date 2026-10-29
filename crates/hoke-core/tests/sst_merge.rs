@@ -37,7 +37,7 @@ impl Storage for ObservedStorage {
         if self.access.fail_reads.get() {
             return Err(io::Error::other("injected read failure"));
         }
-        // Force short reads so streaming merge also exercises exact reads.
+
         let len = bytes.len().min(7);
         self.inner.read_at(offset, &mut bytes[..len])
     }
@@ -183,7 +183,6 @@ fn winning_record_read_failure_propagates_without_source_mutation() {
 
 #[test]
 fn every_output_write_failure_preserves_sources_and_propagates() {
-    // Initialization, records, index, index CRC and header replacement.
     for limit in 0..6 {
         let (table, access) = source(Rows::from([row(b"a", Some(b"one")), row(b"b", None)]));
         let mut output = ObservedStorage::new(MemoryStorage::new());

@@ -90,7 +90,7 @@ fn deterministic_mutations_match_model_for_bounds_prefix_reverse_and_limits() {
             model.insert(key.clone(), value);
         }
     }
-    // Preserve an empty key/value and an all-FF prefix in the live state.
+
     engine.put(b"", b"").unwrap();
     model.insert(vec![], vec![]);
     engine.put(&[255, 255], b"last").unwrap();

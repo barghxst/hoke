@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 
-/** Open the loopback URL through the OS, without shell interpolation. */
 export async function openBrowser(url) {
   const [command, ...args] =
     process.platform === "darwin"
@@ -14,8 +13,7 @@ export async function openBrowser(url) {
       detached: process.platform !== "win32",
       windowsHide: true,
     });
-    // Some launchers remain attached to a running browser. Do not hold startup
-    // or shutdown on them; accepting the OS launch request is all we can confirm.
+
     const timer = setTimeout(resolve, 1500);
     const finish = (error) => {
       clearTimeout(timer);

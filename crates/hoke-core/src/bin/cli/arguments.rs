@@ -1,4 +1,3 @@
-//! Parse and validate the entire invocation before any storage is opened.
 use std::{error::Error, ffi::OsString, ops::Bound, path::PathBuf};
 
 use hoke_core::{BatchOperation, DatabaseOptions, ScanOptions, validate_batch};
@@ -60,7 +59,7 @@ pub(super) fn parse(
     }
     database_options.validate()?;
     let command = command.into_string().map_err(|_| "command must be UTF-8")?;
-    // Validate the complete invocation before opening or creating any file.
+
     let arguments = arguments
         .map(|value| {
             value

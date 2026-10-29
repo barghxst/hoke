@@ -1,4 +1,3 @@
-//! Validate active immutable sources before permitting tail repair.
 use super::{ContainerDatabase, ContainerDbError, MAX_DIRTY_BYTES, MAX_SOURCES};
 use crate::container::{
     Journal,
@@ -83,7 +82,7 @@ impl<S: Storage> ContainerDatabase<S> {
                         "immutable WAL segment too large".into(),
                     ));
                 }
-                // Immutable inner WAL tails are errors; never use repairing Engine::open here.
+
                 for op in decode_wal(&journal.read_segment(&reference)?)? {
                     memory.apply_committed(op);
                 }

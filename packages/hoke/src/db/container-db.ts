@@ -21,7 +21,7 @@ function copy(value: Uint8Array, maximum: number): Uint8Array {
   }
   return new Uint8Array(value);
 }
-/** Internal synchronous Worker-side database; not yet the public openDB mode. */
+
 export class ContainerDB {
   readonly mode = "container-v1" as const;
   constructor(
@@ -132,9 +132,7 @@ export async function openContainerDatabase(
   } catch (error) {
     try {
       handle?.close();
-    } catch {
-      /* Preserve original open failure. */
-    }
+    } catch {}
     throw new ContainerFileError(name, "Cannot open container database", { cause: error });
   }
 }

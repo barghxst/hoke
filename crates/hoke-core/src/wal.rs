@@ -1,4 +1,3 @@
-//! The version 1 WAL codec. This module performs no storage operations.
 use std::error::Error;
 use std::fmt;
 
@@ -128,7 +127,6 @@ fn check_lengths(key_len: usize, value_len: usize) -> Result<(), CodecError> {
 pub(crate) fn decode_frame_header(
     bytes: &[u8; FRAME_HEADER_LEN],
 ) -> Result<FrameHeader, CodecError> {
-    // Do not trust lengths (or allocate from them) before validating the header CRC.
     if crc32fast::hash(&bytes[..24]) != u32_at(bytes, 24) {
         return Err(CodecError::FrameHeaderChecksum);
     }
@@ -302,7 +300,7 @@ mod tests {
                 3, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0
             ]
         );
-        // Fixture checksums were independently computed with Python zlib.crc32.
+
         assert_eq!(
             frame,
             [

@@ -1,5 +1,3 @@
-//! Flush/recovery fault tests. The byte backend models visible file operations,
-//! not loss of power or a filesystem's durability guarantees.
 use hoke_core::directory::Directory;
 use hoke_core::storage::Storage;
 use hoke_core::{BatchOperation, Database, DatabaseOptions, ScanOptions};
@@ -370,7 +368,7 @@ fn rename_unknown_outcome_still_never_appends_requested_operation() {
     let mut db = preflush_seed(&directory);
     directory.arm(None);
     directory.fault.borrow_mut().rename_then_fail = true;
-    assert!(db.delete(b"old").is_ok()); // Shrinks below the threshold, so no flush.
+    assert!(db.delete(b"old").is_ok());
     db.put(b"old", b"ack").unwrap();
     assert!(db.put(b"new", b"value").is_err());
     directory.arm(None);

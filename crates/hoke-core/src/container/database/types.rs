@@ -1,4 +1,3 @@
-//! Public errors and diagnostic counters for the container database.
 use crate::DbError;
 use crate::container::JournalError;
 use std::fmt;

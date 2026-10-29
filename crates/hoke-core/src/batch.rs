@@ -1,20 +1,15 @@
 use crate::{DbError, wal};
 
-/// Maximum number of input operations, including repeated keys.
 pub const MAX_BATCH_OPERATIONS: usize = 1024;
-/// Maximum sum of input key/value lengths, including repeated keys.
+
 pub const MAX_BATCH_BYTES: usize = 32 * 1024 * 1024;
 
-/// One operation in an atomic directory-backed database batch.
-/// Operations run in slice order; the last operation on a key wins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BatchOperation {
     Put { key: Vec<u8>, value: Vec<u8> },
     Delete { key: Vec<u8> },
 }
 
-/// Validate all input without reading or writing storage.
-/// Database::write_batch calls this as well; CLI callers can validate before open.
 pub fn validate_batch(operations: &[BatchOperation]) -> Result<(), DbError> {
     if operations.len() > MAX_BATCH_OPERATIONS {
         return Err(DbError::Limit("batch exceeds 1024 operations"));

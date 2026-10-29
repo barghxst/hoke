@@ -1,5 +1,3 @@
-//! Kill a real process before/after atomic batch publication and after ACK.
-//! These checks exercise process crashes, not loss of power or filesystem caches.
 #![cfg(unix)]
 
 use std::cell::Cell;
@@ -99,7 +97,6 @@ impl RunningChild {
 
 impl Drop for RunningChild {
     fn drop(&mut self) {
-        // Clean up even on assertion failure, before deleting the test files.
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -114,8 +111,6 @@ struct PausedPublication {
 
 impl PausedPublication {
     fn pause(&self, boundary: &str) -> ! {
-        // The marker is outside the database and is emitted only after every
-        // acknowledged mutation has returned successfully in the child driver.
         let pending = self.ready.with_extension("pending");
         fs::write(&pending, boundary).unwrap();
         fs::rename(pending, &self.ready).unwrap();
@@ -147,8 +142,6 @@ impl Directory for PausedPublication {
         }
         self.directory.rename(from, to)?;
         if self.armed.get() && self.mode == "after" {
-            // Pause before returning to Database, hence before directory fsync
-            // and switching the in-memory WAL/table handles.
             self.pause("after manifest rename");
         }
         Ok(())
@@ -204,8 +197,7 @@ fn batch_child_driver() {
         ])
         .unwrap();
     assert_eq!(std::env::var(MODE).unwrap(), "ack");
-    // Publication and write_batch's success acknowledgement precede this marker.
-    // Kill while Database still owns its locks and open files.
+
     let pending = root.join("ready.pending");
     fs::write(&pending, "acknowledged batch").unwrap();
     fs::rename(pending, root.join("ready")).unwrap();
@@ -239,8 +231,7 @@ fn assert_state(database: &mut Database<NativeDirectory>, has_batch: bool) {
             None
         }
     );
-    // These confirmed changes are outside the batch and remain in both possible
-    // manifest states, including an acknowledged deletion in the old WAL.
+
     assert_eq!(database.get(b"deleted").unwrap(), None);
     assert_eq!(
         database.get(b"inserted").unwrap(),
@@ -285,8 +276,7 @@ fn kill_at_publication(mode: &str) {
 
     let mut recovered = Database::open(NativeDirectory::open(root.database()).unwrap()).unwrap();
     assert_state(&mut recovered, mode != "before");
-    // Recovery must also leave a writable database, including generation choice
-    // above the orphan SST/WAL/temp files from a pre-publication termination.
+
     recovered.put(b"after", b"recovery works").unwrap();
     recovered.flush().unwrap();
     let compacted = recovered.compact().unwrap();

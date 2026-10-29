@@ -201,7 +201,6 @@ fn every_incomplete_final_frame_cut_keeps_prefix_and_allows_new_append() {
 fn complete_corrupt_headers_and_payloads_at_middle_or_end_are_never_truncated() {
     let (bytes, middle, final_start) = fixture();
     for (start, end) in [(middle, final_start), (final_start, bytes.len())] {
-        // Every byte in the complete frame, including header/checksums, matters.
         for index in start..end {
             let mut corrupt = bytes.clone();
             corrupt[index] ^= 1;
@@ -252,7 +251,7 @@ fn invalid_magic_version_checksum_and_short_initial_headers_are_untouched() {
         assert_eq!(storage.0.borrow().writes, 0);
         assert_eq!(storage.0.borrow().truncations, 0);
     }
-    // Zero bytes mean a new WAL, so incomplete existing headers start at one.
+
     for cut in 1..FILE_HEADER {
         let storage = SharedStorage::from_bytes(bytes[..cut].to_vec());
         assert!(matches!(
@@ -298,7 +297,6 @@ fn each_partial_append_failure_poisoned_without_publishing_and_reopens_prefix() 
         assert_eq!(reopened.get(b"prior"), Some(&b"confirmed"[..]));
         assert_eq!(reopened.get(b"middle"), Some(&b"payload"[..]));
         if prefix == frame_len {
-            // A fully appended but unacknowledged frame may survive an error.
             assert_eq!(reopened.get(b"final"), Some(&b"payload"[..]));
         } else {
             assert_eq!(reopened.get(b"final"), None);

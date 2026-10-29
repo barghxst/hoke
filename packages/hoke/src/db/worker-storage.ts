@@ -24,7 +24,6 @@ export interface WorkerStorageEnvironment {
   navigator: { storage?: { getDirectory?: () => Promise<DirectoryHandle> } };
 }
 
-/** Owns the Rust engine together with its exclusive OPFS file handle. */
 export class WorkerDatabase {
   private engine: WasmWal | WasmContainerDb | undefined;
   private handle: SyncHandle | undefined;
@@ -56,7 +55,7 @@ export class WorkerDatabase {
         "Synchronous OPFS handles are unavailable in this worker.",
       );
     }
-    // Loading or compiling WASM must succeed before creating any OPFS entries.
+
     await initializeWasm();
     let acquired: SyncHandle | undefined;
     try {
@@ -93,9 +92,7 @@ export class WorkerDatabase {
     } catch (error) {
       try {
         owned.close();
-      } catch {
-        // Preserve the initialization error; the worker no longer owns an engine.
-      }
+      } catch {}
       throw error;
     }
   }

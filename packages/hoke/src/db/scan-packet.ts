@@ -7,7 +7,6 @@ import {
   type NormalizedScanOptions,
 } from "./scan.js";
 
-/** Decode bounded live rows shared by Worker responses and internal layered reads. */
 export function decodeScan(value: unknown, options: NormalizedScanOptions): DBEntry[] {
   if (!(value instanceof Uint8Array) || value.byteLength < 4 || value.byteLength > MAX_SCAN_BYTES) {
     throw new Error("Invalid scan packet");

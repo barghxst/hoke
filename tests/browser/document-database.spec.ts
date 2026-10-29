@@ -145,7 +145,7 @@ test("automatic document maintenance preserves overwrites and tombstones across 
     deleted: true,
     rows: [{ key: "latest", value: { version: 109 } }],
   });
-  // Read persisted stats independently after ownership has returned from the facade.
+
   const stats = await page.evaluate(async () => {
     const raw = await (window as unknown as Harness).openDB("documents-maintenance", {
       mode: "container-v1",

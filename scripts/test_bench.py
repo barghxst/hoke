@@ -1,4 +1,3 @@
-"""Contract tests for the native benchmark runner (no timing thresholds)."""
 import argparse
 import copy
 import io

@@ -34,9 +34,7 @@ async function acquire(
   } catch (error) {
     try {
       handle?.close();
-    } catch {
-      // Preserve the original failure, including failed creation/flush.
-    }
+    } catch {}
     throw new SstFileError(
       packet === undefined
         ? `Cannot open SST ${name}`
@@ -47,7 +45,6 @@ async function acquire(
   }
 }
 
-/** Directory ownership is required: lookup and creation are separate OPFS calls. */
 async function candidateName(directory: SstDirectory): Promise<string> {
   for (let attempt = 0; attempt < 16; attempt++) {
     const name = `${crypto.randomUUID()}.sst`;
@@ -68,7 +65,6 @@ async function candidateName(directory: SstDirectory): Promise<string> {
   throw new SstFileError("Cannot allocate a unique SST candidate name", undefined);
 }
 
-/** Caller must exclusively own the directory while selecting and creating candidates. */
 export async function createSstCandidate(
   directory: SstDirectory,
   entries: readonly SstEntry[],
@@ -78,11 +74,6 @@ export async function createSstCandidate(
   return acquire(directory, await candidateName(directory), packet);
 }
 
-/**
- * Build an unpublished merge candidate, oldest source first and newest last.
- * Source files remain untouched; tombstones are retained. No manifest is changed.
- * Caller must own the directory and release any SstFile on these source names first.
- */
 export async function mergeSstCandidates(
   directory: SstDirectory,
   names: readonly string[],
@@ -103,7 +94,6 @@ export async function mergeSstCandidates(
   let engine: WasmSst | undefined;
   let createdName: string | undefined;
   try {
-    // Acquire every source before creating output: a missing/locked input leaves no orphan.
     for (const name of sources) {
       const file = await directory.getFileHandle(name, { create: false });
       inputs.push(await file.createSyncAccessHandle());
@@ -112,35 +102,25 @@ export async function mergeSstCandidates(
     createdName = name;
     const file = await directory.getFileHandle(name, { create: true });
     output = await file.createSyncAccessHandle();
-    // WASM validates source metadata before destination writes. Winning record
-    // payloads are checked while streaming; merge is not a full source scrub.
+
     engine = WasmSst.merge(adapter(output), inputs.map(adapter));
-    // Do not transfer output ownership until every source handle has closed.
-    // Pop first: cleanup must not close a handle twice when its close throws.
+
     while (inputs.length > 0) inputs.pop()?.close();
     return new SstFile(name, engine, output);
   } catch (error) {
     try {
       engine?.close();
-    } catch {
-      // Preserve the first failure.
-    }
+    } catch {}
     try {
       engine?.free();
-    } catch {
-      // Preserve the first failure.
-    }
+    } catch {}
     try {
       output?.close();
-    } catch {
-      // Preserve the first failure.
-    }
+    } catch {}
     for (const input of inputs) {
       try {
         input.close();
-      } catch {
-        // Continue releasing other handles; preserve the first failure.
-      }
+      } catch {}
     }
     throw new SstFileError(
       createdName === undefined

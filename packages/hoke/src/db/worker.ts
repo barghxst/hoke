@@ -82,7 +82,6 @@ async function respond(data: unknown): Promise<void> {
   }
 }
 
-// In particular, requests queued during WASM initialization cannot overtake open.
 let queue = Promise.resolve();
 let transportFailed = false;
 scope.addEventListener("message", (event) => {
@@ -90,14 +89,10 @@ scope.addEventListener("message", (event) => {
   queue = queue
     .then(() => respond(event.data))
     .catch((error: unknown) => {
-      // Even the error response could not be delivered. Release ownership now,
-      // then surface an error event so the client terminates every pending call.
       transportFailed = true;
       try {
         database.close();
-      } catch {
-        // Preserve the transport error; close already attempted every resource.
-      }
+      } catch {}
       setTimeout(() => {
         throw error instanceof Error ? error : new Error("Database worker transport failed");
       }, 0);

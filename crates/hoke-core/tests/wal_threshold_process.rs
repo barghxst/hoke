@@ -1,5 +1,3 @@
-//! Kill a real process around manifest publication, without running destructors.
-//! These checks exercise process crashes, not loss of power or filesystem caches.
 #![cfg(unix)]
 
 use std::cell::Cell;
@@ -99,7 +97,6 @@ impl RunningChild {
 
 impl Drop for RunningChild {
     fn drop(&mut self) {
-        // Clean up even on assertion failure, before deleting the test files.
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -114,8 +111,6 @@ struct PausedPublication {
 
 impl PausedPublication {
     fn pause(&self) -> ! {
-        // The marker is outside the database and is emitted only after every
-        // acknowledged mutation has returned successfully in the child driver.
         fs::write(&self.ready, b"ready").unwrap();
         loop {
             thread::park();
@@ -147,8 +142,6 @@ impl Directory for PausedPublication {
         }
         self.directory.rename(from, to)?;
         if self.armed.get() {
-            // Pause before returning to Database, hence before directory fsync
-            // and switching the in-memory WAL/table handles.
             self.pause();
         }
         Ok(())
@@ -185,9 +178,7 @@ fn wal_threshold_child_driver() {
         },
     )
     .unwrap();
-    // Ten overwrites keep exactly one nine-byte payload, while their WAL
-    // frames accumulate. The additional acknowledged key and tombstone must
-    // survive either side of publication as well.
+
     for index in 0..10 {
         database
             .put(b"updated", format!("{index:02}").as_bytes())
@@ -201,8 +192,7 @@ fn wal_threshold_child_driver() {
     assert_eq!(database.stats().memtable_bytes, 26);
     assert_eq!(database.stats().table_count, 1);
     armed.set(true);
-    // This frame would exceed 507, despite leaving payload size unchanged.
-    // Publication pauses before this particular overwrite is appended.
+
     database.put(b"updated", b"10").unwrap();
     panic!("threshold preflush unexpectedly returned instead of pausing");
 }
@@ -241,8 +231,7 @@ fn kill_at_publication(mode: &str) {
 
     let mut recovered = Database::open(NativeDirectory::open(root.database()).unwrap()).unwrap();
     assert_committed(&mut recovered);
-    // Recovery must also leave a writable database, including generation choice
-    // above the orphan SST/WAL/temp files from a pre-publication termination.
+
     recovered.put(b"after", b"recovery works").unwrap();
     recovered.flush().unwrap();
     assert!(recovered.compact().unwrap().cleanup.errors.is_empty());

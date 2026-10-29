@@ -73,7 +73,7 @@ fn compact_merges_runs_and_unflushed_changes_and_reclaims_old_files() {
     assert_eq!(success(&path, &["get", "a"]), "value=\"latest\"\n");
     assert_eq!(success(&path, &["get", "b"]), "NOT_FOUND\n");
     let new_names = names(&path);
-    assert_eq!(new_names.len(), 4); // LOCK, manifest, one SST and one WAL.
+    assert_eq!(new_names.len(), 4);
     for old in old_names.into_iter().filter(|name| name.starts_with('g')) {
         assert!(!new_names.contains(&old), "retained obsolete file {old}");
     }
@@ -100,7 +100,7 @@ fn gc_removes_only_managed_orphans_and_keeps_current_data_and_unknown_files() {
     std::fs::write(&orphan, b"unpublished partial data").unwrap();
     let output = success(&path, &["gc"]);
     assert!(output.contains("OK gc"));
-    assert!(output.contains("removed_files=2")); // Old WAL and explicit orphan.
+    assert!(output.contains("removed_files=2"));
     assert!(!orphan.exists());
     assert_eq!(std::fs::read(path.join("notes.txt")).unwrap(), b"user data");
     assert_eq!(
@@ -139,7 +139,7 @@ fn cleanup_failure_reports_published_compaction_and_remains_retryable() {
     success(&path, &["put", "key", "value"]);
     success(&path, &["flush"]);
     success(&path, &["put", "key", "newest"]);
-    // remove_file must fail on an orphan directory rather than recursively deleting it.
+
     let blocked = path.join("g00000000000000000999.wal");
     std::fs::create_dir(&blocked).unwrap();
     let output = invoke(&path, &["compact"]);

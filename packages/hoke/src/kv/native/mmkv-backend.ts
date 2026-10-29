@@ -3,7 +3,6 @@ import { isThenable } from "../../sync-result.js";
 import type { KVBackend } from "../backend.js";
 import { KVStorageError } from "../errors.js";
 
-/** Minimal MMKV surface; applications may inject an already configured instance. */
 export interface MMKVInstance {
   getString(key: string): string | undefined;
   contains(key: string): boolean;

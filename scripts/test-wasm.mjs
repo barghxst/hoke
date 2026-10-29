@@ -9,8 +9,6 @@ import init, {
   WasmWal,
 } from "../packages/hoke/wasm/hoke_wasm.js";
 
-// Run the actual generated Rust/WASM artifact. This adapter only replaces the
-// byte transport; it does not emulate Engine, the WAL codec, or recovery.
 await init({
   module_or_path: await readFile(
     new URL("../packages/hoke/wasm/hoke_wasm_bg.wasm", import.meta.url),
@@ -150,7 +148,7 @@ test("close is idempotent, rejects further use, and leaves handle ownership in J
   const adapter = new ByteAdapter();
   const engine = new WasmWal(adapter);
   close(engine);
-  // free() releases the Rust object, so exercise idempotence on a fresh object.
+
   const second = new WasmWal(adapter);
   second.close();
   const syncs = adapter.syncs;
@@ -308,9 +306,6 @@ test("final synchronization failure still consumes the engine", () => {
   engine.free();
 });
 
-// Engine appends and recovery truncates. Neither API exposes arbitrary gap
-// writes/extensions; those private Storage paths are not claimed as covered.
-
 function unpackScan(packet) {
   assert(packet instanceof Uint8Array);
   const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
@@ -424,7 +419,7 @@ test("actual WASM scan enforces 1000 rows and exact 32 MiB packet boundary", () 
   const maximum = 16 * 1024 * 1024;
   const value = new Uint8Array(maximum);
   engine.put(bytes(0), value);
-  // Two one-byte keys, two length pairs and row count require 22 bytes.
+
   engine.put(bytes(1), value.subarray(0, maximum - 22));
   let packet = engine.scan(undefined, undefined, undefined, 0, 100);
   assert.equal(packet.length, 32 * 1024 * 1024);
@@ -455,7 +450,6 @@ test("actual WASM rejects scan after close and retains confirmed scan after fail
   engine.free();
 });
 
-// SST packets are ephemeral transfer framing. Durable bytes remain native SST v1.
 function packSst(rows) {
   const packet = new Uint8Array(
     4 + rows.reduce((total, [key, value]) => total + 8 + key.length + (value?.length ?? 0), 0),
@@ -573,7 +567,7 @@ test("actual WASM SST preflights malformed packets without any adapter calls", (
       [bytes(1), null],
     ]),
   ];
-  const badCount = bytes(65, 66, 15, 0); // 1,000,001 little endian.
+  const badCount = bytes(65, 66, 15, 0);
   packets.push(badCount);
   const badKey = valid.slice();
   new DataView(badKey.buffer).setUint32(4, 65537, true);
@@ -598,7 +592,7 @@ test("actual WASM SST preserves nonempty destination and rejects corrupt immutab
     assert.deepEqual(bad.bytes, changed);
     assert.equal(bad.writes, 0);
   }
-  // Opening validates frame headers/index; payload CRC is validated on lookup.
+
   const bad = new ByteAdapter(before);
   bad.bytes[32 + 28] ^= 1;
   const table = new WasmSst(bad);
@@ -622,7 +616,7 @@ test("actual WASM SST creation propagates partial-write and flush failure withou
     throw new Error("injected SST flush failure");
   };
   assert.throws(() => WasmSst.create(flushFailure, packSst(sstRows)), /injected SST flush failure/);
-  // A candidate can be complete despite its failed durability acknowledgement.
+
   const reopened = new WasmSst(flushFailure);
   assert.deepEqual(sstScan(reopened), sstRows);
   close(reopened);
@@ -664,7 +658,7 @@ test("actual WASM SST indexed scan reads selected records only", () => {
   assert(offsets.length > 0);
   const index = new DataView(adapter.bytes.buffer).getBigUint64(20, true);
   assert(offsets.every((at) => at >= 32 && at < Number(index)));
-  // Corrupt an unrelated earlier payload; indexed prefix scan must not read it.
+
   adapter.bytes[32 + 28] ^= 1;
   assert.deepEqual(sstScan(table, undefined, undefined, bytes(255)), sstRows.slice(4));
   close(table);
@@ -682,8 +676,7 @@ test("actual WASM SST scan enforces exact packet byte and row boundaries", () =>
   );
   assert.equal(table.scan(undefined, undefined, undefined, 0, 1000).length, 32 * 1024 * 1024);
   close(table);
-  // Build a larger native SST by extending the second record by one byte,
-  // independently updating native record/header CRCs and its index offset.
+
   const native = adapter.bytes;
   const oldView = new DataView(native.buffer);
   const oldIndex = Number(oldView.getBigUint64(20, true));
@@ -751,7 +744,7 @@ test("actual WASM SST merge preserves newest values, tombstones, reinsertions an
   ];
   assert.deepEqual(sstScan(table), expected);
   assert.equal(destination.syncs, 1);
-  assert(destination.writes > 10); // Partial JS writes must still make a complete SST.
+  assert(destination.writes > 10);
   close(table);
   table = new WasmSst(destination);
   assert.deepEqual(sstScan(table), expected);
@@ -833,7 +826,7 @@ test("actual WASM SST merge checks winning payload CRC while streaming without s
   source.bytes[32 + 28 + 1] ^= 1;
   const destination = new ByteAdapter();
   assert.throws(() => WasmSst.merge(destination, [source]), /checksum/);
-  assert(destination.bytes.length > 0); // Header was written; this is an orphan candidate.
+  assert(destination.bytes.length > 0);
   assert.equal(destination.syncs, 0);
   const newest = mergeSource([[bytes(1), null]]);
   const valid = new ByteAdapter();
@@ -848,7 +841,7 @@ test("actual WASM SST merge streams beyond scan row limits and the 32 MiB transf
   const large = new Uint8Array(16 * 1024 * 1024);
   large[0] = 41;
   large[large.length - 1] = 99;
-  // Each input fits the create packet budget; their merged output does not.
+
   const left = mergeSource([[bytes(250), large]]);
   const right = mergeSource([[bytes(251), large]]);
   const destination = new FullByteAdapter();
@@ -1518,7 +1511,7 @@ test("actual WASM container active winning SST corruption never falls back to st
   db.flush();
   const journal = new WasmJournal(adapter);
   const root = journal.root();
-  // Root header is 24 bytes followed by oldest-to-newest SST descriptors.
+
   const newest = root.subarray(48, 72);
   const payload = refOffset(newest) + 32;
   close(journal);

@@ -1,4 +1,3 @@
-//! Append-only segment writes and root publication.
 mod io;
 mod recovery;
 #[cfg(test)]
@@ -14,8 +13,6 @@ use io::{checksum, io_error, payload_buffer, read_exact, record_end, sync};
 use std::collections::BTreeMap;
 pub use types::{JournalError, JournalRecovery};
 
-/// Owns one exclusive byte store. Appending a segment does not publish or sync it.
-/// Only a successful commit publishes a new root; failed I/O requires reopening.
 pub struct Journal<S: Storage> {
     storage: S,
     end: u64,
@@ -195,8 +192,7 @@ impl<S: Storage> Journal<S> {
             )?;
             Ok(payload)
         })();
-        // An unknown caller-supplied ref is rejected above without touching
-        // storage. A known record failing reread makes future publication unsafe.
+
         if matches!(
             &result,
             Err(JournalError::Io { .. } | JournalError::Corruption(_))

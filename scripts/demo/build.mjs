@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-/** Build before listening; keep tool output visible and terminate its process tree on cancellation. */
 export function buildProject(root, log, signal) {
   return new Promise((resolve, reject) => {
     const executable = process.env.npm_execpath;
@@ -58,8 +57,6 @@ export function buildProject(root, log, signal) {
     child.once("close", (code) => {
       signal.removeEventListener("abort", stop);
       if (forceKill) {
-        // The direct child may exit before a stubborn descendant. Keep the
-        // bounded group cleanup alive until no member of that group remains.
         try {
           process.kill(-child.pid, 0);
         } catch (error) {

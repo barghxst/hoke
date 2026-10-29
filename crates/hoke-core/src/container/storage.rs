@@ -1,4 +1,3 @@
-//! Shared exclusive handle and immutable bounded views of segment payloads.
 use std::{cell::RefCell, io, rc::Rc};
 
 use super::{CodecError, SegmentRef, codec};
@@ -57,7 +56,6 @@ pub(crate) struct ReadSegment<S: Storage> {
     length: u64,
 }
 impl<S: Storage> ReadSegment<S> {
-    /// The coordinator must select a reference validated by the journal.
     pub(crate) fn new(
         storage: SharedStorage<S>,
         reference: SegmentRef,

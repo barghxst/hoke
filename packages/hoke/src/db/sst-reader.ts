@@ -4,7 +4,6 @@ import { type DBScanOptions, normalizeScanOptions } from "./scan.js";
 import { decode, type SstEntry, validKey } from "./sst-packet.js";
 import { SstFileError, type SstSyncHandle } from "./sst-storage.js";
 
-/** Owns one exclusive sync handle. Closing never deletes the file. */
 export class SstFile {
   private engine: WasmSst | undefined;
   private handle: SstSyncHandle | undefined;
@@ -20,7 +19,7 @@ export class SstFile {
     if (!this.engine) throw new SstFileError("SST file is closed", undefined);
     return this.engine;
   }
-  /** undefined means missing; null means a stored deletion marker. */
+
   lookup(key: Uint8Array): Uint8Array | null | undefined {
     validKey(key);
     const result = this.current().lookup(key);

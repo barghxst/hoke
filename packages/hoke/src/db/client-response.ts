@@ -41,7 +41,6 @@ function decodeStats(packet: unknown): DBStats {
   };
 }
 
-/** Decode only the result allowed for the operation awaiting this ACK. */
 export function decodeResult(
   op: Request["op"],
   packet: unknown,

@@ -1,5 +1,3 @@
-//! WAL accounting, fault publication, and incomplete-tail regression cases.
-
 use super::*;
 use crate::storage::MemoryStorage;
 use crate::wal::{self, Operation};
@@ -139,8 +137,7 @@ fn failed_append_flush_or_sync_does_not_publish_payload_bytes() {
             assert_eq!(engine.change_bytes(), 12);
             let mut storage = engine.storage;
             storage.failure = None;
-            // The fully written, unacknowledged operation may recover; its
-            // contribution is then derived from the actual checked WAL.
+
             let reopened = Engine::open(storage).unwrap();
             assert_eq!(reopened.change_bytes(), if delete { 3 } else { 10 });
         }

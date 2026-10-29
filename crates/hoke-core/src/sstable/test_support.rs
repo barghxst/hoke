@@ -1,4 +1,3 @@
-//! Shared byte fixtures for reader validation and writer compatibility checks.
 use std::collections::BTreeMap;
 
 use crate::storage::{MemoryStorage, Storage};

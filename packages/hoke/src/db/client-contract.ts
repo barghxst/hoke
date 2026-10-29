@@ -38,7 +38,6 @@ export interface DBStats {
   memtableBytes: number;
 }
 
-/** Structural so consumers do not need DOM types or a global AbortSignal. */
 export interface DBAbortSignal {
   readonly aborted: boolean;
   addEventListener(type: "abort", listener: () => void, options?: { once?: boolean }): void;

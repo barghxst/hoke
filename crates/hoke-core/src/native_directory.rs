@@ -1,4 +1,3 @@
-//! Native directory ownership and atomic manifest publication primitives.
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -6,10 +5,6 @@ use std::path::{Component, Path, PathBuf};
 use crate::directory::Directory;
 use crate::storage::FileStorage;
 
-/// A database directory with a cooperative exclusive lock held until drop.
-///
-/// Paths and handles are not exposed: callers cannot accidentally close or clone
-/// the lock. Other software must respect `LOCK` and not unlink/replace that file.
 #[derive(Debug)]
 pub struct NativeDirectory {
     path: PathBuf,
@@ -17,12 +12,7 @@ pub struct NativeDirectory {
 }
 
 impl NativeDirectory {
-    /// Open a directory, creating only its final component if absent.
-    ///
-    /// The parent must exist. A newly created directory is synchronized through
-    /// its parent on Unix. Directory synchronization is unsupported elsewhere.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        // Anchor once: later cwd changes must not redirect a locked directory.
         let path = std::path::absolute(path)?;
         let created = match fs::create_dir(&path) {
             Ok(()) => true,
@@ -44,7 +34,7 @@ impl NativeDirectory {
                 .unwrap_or(Path::new("."));
             sync_path(parent)?;
         }
-        // Resolve a caller-provided symlink before retaining the directory path.
+
         let path = fs::canonicalize(path)?;
         let lock = OpenOptions::new()
             .read(true)

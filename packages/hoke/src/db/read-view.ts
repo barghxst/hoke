@@ -20,7 +20,7 @@ function adapter(handle: SstSyncHandle) {
     flush: () => handle.flush(),
   };
 }
-/** Internal live WAL overlay over immutable SSTs; no publication or WAL ownership. */
+
 export class SstReadView {
   constructor(
     private engine: WasmReadView | undefined,
@@ -48,7 +48,7 @@ export class SstReadView {
       normalized,
     );
   }
-  /** Release every owned resource even when one cleanup operation fails. */
+
   close(): void {
     const engine = this.engine;
     const handles = this.handles;
@@ -76,7 +76,6 @@ export class SstReadView {
   }
 }
 
-/** Caller owns the directory. Sources are oldest first, newest last. */
 export async function openSstReadView(
   directory: SstDirectory,
   names: readonly string[],
@@ -104,9 +103,7 @@ export async function openSstReadView(
     for (const handle of handles) {
       try {
         handle.close();
-      } catch {
-        /* Preserve the acquisition failure and continue cleanup. */
-      }
+      } catch {}
     }
     throw new SstFileError("Cannot open SST read view", undefined, { cause: error });
   }

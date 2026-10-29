@@ -209,7 +209,7 @@ describe("synchronous backend contract", () => {
       write: () => {},
       remove: () => {},
     };
-    // JavaScript backends may violate the TypeScript contract at runtime.
+
     const kv = new KV({ name: "async-read", backend: backend as never });
     expect(() => kv.get("key")).toThrow(expect.objectContaining({ code: "READ_FAILED" }));
     await new Promise((resolve) => setImmediate(resolve));

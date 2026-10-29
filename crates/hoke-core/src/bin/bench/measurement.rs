@@ -1,5 +1,3 @@
-//! Timing boundaries, untimed storage snapshots, and measurement JSON.
-
 use std::fs;
 use std::path::Path;
 use std::time::Instant;

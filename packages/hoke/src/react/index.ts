@@ -8,7 +8,6 @@ import {
 } from "react";
 import type { Store } from "../store.js";
 
-/** Subscribe to the complete immutable store snapshot. */
 export function useValue<T>(store: Store<T>): T {
   return useStore(store, identity);
 }
@@ -17,7 +16,6 @@ function identity<T>(value: T): T {
   return value;
 }
 
-/** Subscribe to a selected value; equal selections retain their previous reference. */
 export function useStore<T, S>(
   store: Store<T>,
   selector: (value: T) => S,
@@ -31,8 +29,6 @@ export function useStore<T, S>(
     let snapshot: T;
     let selection: S;
 
-    // The cache belongs to this render's selector, not to the shared ref: a
-    // suspended/concurrent render must not overwrite another render's cache.
     const select = (nextSnapshot: T): S => {
       if (initialized && Object.is(snapshot, nextSnapshot)) return selection;
       const nextSelection = selector(nextSnapshot);

@@ -2,30 +2,22 @@ use std::io;
 
 use super::Storage;
 
-/// Explicitly selected, volatile byte storage.
-///
-/// Data only lives in this instance. `flush` and `sync_all` are no-ops and do
-/// not make its contents persistent.
 #[derive(Debug, Default)]
 pub struct MemoryStorage {
     data: Vec<u8>,
 }
 
 impl MemoryStorage {
-    /// Create an empty, volatile store.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Consume the volatile store without copying its bytes.
     pub fn into_bytes(self) -> Vec<u8> {
         self.data
     }
 
     fn resize(&mut self, len: usize) -> io::Result<()> {
         if len > self.data.len() {
-            // Reserve before resize so allocation/capacity failures become an
-            // error without changing any existing bytes or the store length.
             self.data
                 .try_reserve_exact(len - self.data.len())
                 .map_err(|error| io::Error::new(io::ErrorKind::OutOfMemory, error))?;
@@ -69,7 +61,7 @@ impl Storage for MemoryStorage {
         if end > self.data.len() {
             self.resize(end)?;
         }
-        // end was checked and includes the complete input length.
+
         let start = end - bytes.len();
         self.data[start..end].copy_from_slice(bytes);
         Ok(())
@@ -82,12 +74,10 @@ impl Storage for MemoryStorage {
         self.resize(len)
     }
 
-    /// No-op: this backend is volatile and has no pending I/O buffers.
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 
-    /// No-op: this backend is volatile and has no persistent backing storage.
     fn sync_all(&mut self) -> io::Result<()> {
         Ok(())
     }
@@ -178,8 +168,7 @@ mod tests {
     fn impossible_allocations_return_errors_without_mutation() {
         let mut storage = MemoryStorage::new();
         storage.write_all_at(0, b"original").unwrap();
-        // u64::MAX cannot fit into a Vec on supported 32/64-bit targets:
-        // conversion or Vec capacity checks reject it before allocation.
+
         assert!(storage.set_len(u64::MAX).is_err());
         assert_eq!(storage.data, b"original");
         assert!(storage.write_all_at(u64::MAX - 1, &[1]).is_err());

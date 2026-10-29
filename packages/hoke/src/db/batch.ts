@@ -6,7 +6,6 @@ export type DBBatchOperation =
   | { type: "put"; key: Uint8Array; value: Uint8Array }
   | { type: "delete"; key: Uint8Array };
 
-/** Snapshot the entire input before dispatch; repeated keys retain input order. */
 export function normalizeBatch(operations: unknown): DBBatchOperation[] {
   if (!Array.isArray(operations) || operations.length > MAX_BATCH_OPERATIONS) {
     throw new TypeError("Batch must have at most 1024 operations");
@@ -37,7 +36,6 @@ export function normalizeBatch(operations: unknown): DBBatchOperation[] {
   return result;
 }
 
-/** Ephemeral WASM request packet; the persistent payload uses the existing WAL codec. */
 export function packBatch(operations: readonly DBBatchOperation[]): Uint8Array {
   const owned = normalizeBatch(operations);
   const payload = owned.reduce(

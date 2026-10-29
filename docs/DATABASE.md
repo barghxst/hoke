@@ -16,11 +16,10 @@ const isTask = (value: unknown): value is Task =>
   "done" in value &&
   typeof value.done === "boolean";
 
-// Создайте базу и коллекции один раз на lifetime приложения.
 const db = await openDatabase("my-app");
 const tasks = db.collection("tasks", { validate: isTask });
 await tasks.set("first", { text: "Попробовать Hoke", done: false });
-const task = await tasks.get("first"); // Task | undefined
+const task = await tasks.get("first");
 await tasks.delete("first");
 ```
 
@@ -64,7 +63,6 @@ const stop = tasks.subscribe("first", () => {
 const stopList = tasks.subscribeRange({ prefix: "project:" }, () => {
   void tasks.list({ prefix: "project:" }).then(renderList).catch(showError);
 });
-// При завершении использования:
 stop();
 stopList();
 ```
@@ -77,7 +75,6 @@ stopList();
 import { useDBValue } from "hoke/react";
 
 function TaskView() {
-  // tasks — стабильный экземпляр коллекции, созданный вне render.
   const state = useDBValue(tasks, "first");
   if (state.status === "loading") return <p>Загрузка…</p>;
   if (state.status === "error") return <p>Не удалось прочитать задачу.</p>;

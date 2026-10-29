@@ -31,7 +31,7 @@ const db = await openDB("settings", { timeoutMs: 30_000 });
 const key = new TextEncoder().encode("theme");
 try {
   await db.put(key, new TextEncoder().encode("dark"));
-  const bytes = await db.get(key); // Uint8Array | undefined
+  const bytes = await db.get(key);
   await db.delete(key);
 } finally {
   await db.close();
@@ -118,7 +118,6 @@ const rows = await db.scan({
   reverse: true,
   limit: 50,
 });
-// rows: { key: Uint8Array; value: Uint8Array }[]
 ```
 
 Start/end всегда задаются в прямом порядке, reverse меняет только выдачу. Все фильтры пересекаются. Без опций возвращается максимум100 живых записей, limit допускает0..1000; limit0 даёт пустой результат после проверки bounds. Ключи сравниваются побайтово, prefix может быть пустым или содержать0xff. Удалённые keys не выдаются. Result arrays принадлежат caller; входные bounds/prefix копируются при вызове.
@@ -133,7 +132,6 @@ const selected = await users.scan({
   start: { key: encode("001"), inclusive: true },
   limit: 10,
 });
-// selected[0].key === bytes("001"), без физического namespace.
 ```
 
 DBCollection предоставляет get/put/delete/scan и подписки с bytes и разделяет срок жизни/ошибки своей базы. Отдельного close нет. Имя коллекции — любые bytes, включая пустые; копируется при создании. Безопасный namespace:0x01 + u32BE длина prefix + prefix. Коллекции a/ab с ключами bc/c не сливаются. Максимум prefix65531bytes; namespace+local key должен помещаться в64KiB. Collection scan использует относительные bounds/prefix и не выходит за свою коллекцию. Root db.scan показывает физические ключи всех коллекций, существующие raw keys автоматически не переносятся.
@@ -151,15 +149,11 @@ let changes = 0;
 const stop = db.subscribeRange({ prefix: new TextEncoder().encode("user:") }, () => {
   changes++;
 });
-const stopKey = db.subscribe(new TextEncoder().encode("user:1"), () => {
-  // Синхронный callback: здесь можно пометить UI для обновления.
-});
+const stopKey = db.subscribe(new TextEncoder().encode("user:1"), () => {});
 try {
   await db.put(new TextEncoder().encode("user:1"), new Uint8Array([1]));
 } catch (error) {
   if (error instanceof DBNotificationError) {
-    // committed === true: запись сохранена, errors содержит ошибки callbacks.
-    // Не повторяйте mutation автоматически.
   } else {
     throw error;
   }
@@ -186,7 +180,6 @@ import { openDB, type DBOperationOptions } from "hoke/db";
 
 const opening = new AbortController();
 const db = await openDB("settings", { signal: opening.signal });
-// После ACK open этот signal уже не управляет соединением.
 const request = new AbortController();
 const operation: DBOperationOptions = { signal: request.signal };
 try {
@@ -195,7 +188,6 @@ try {
 } finally {
   await db.close();
 }
-// request.abort() из UI до settlement отменяет запрос по правилам ниже.
 ```
 
 Сигнатуры BrowserDB и DBCollection: get(key,options?), put(key,value,options?), delete(key,options?), scan(scanOptions?,operationOptions?). DBOperationOptions содержит signal; OpenDBOptions также принимает timeoutMs и mode. Container-only writeBatch/flush/compact/stats принимают options с signal последним аргументом. close() не принимает signal и закрывает всю сессию.

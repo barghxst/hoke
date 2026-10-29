@@ -3,7 +3,6 @@ import type { DBListener } from "./notifications.js";
 
 export type DocumentErrorCode = "INVALID_ARGUMENT" | "INVALID_VALUE" | "INVALID_DATA";
 
-/** Input errors and stored-data errors never rewrite the source record. */
 export class DocumentError extends Error {
   constructor(
     readonly code: DocumentErrorCode,
@@ -24,7 +23,6 @@ export interface CollectionBound {
   inclusive: boolean;
 }
 
-/** Bounds use encoded UTF-8 byte order, without locale collation or normalization. */
 export interface CollectionRange {
   start?: CollectionBound;
   end?: CollectionBound;

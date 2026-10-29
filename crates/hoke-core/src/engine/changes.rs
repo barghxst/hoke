@@ -1,5 +1,3 @@
-//! Derived live values, tombstones, and logical payload accounting.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
@@ -91,7 +89,7 @@ impl<S: Storage> Engine<S> {
     pub(crate) fn change_count(&self) -> usize {
         self.values.len() + self.deleted.len()
     }
-    /// Logical key/value payload in this WAL delta, excluding allocation overhead.
+
     pub(crate) fn change_bytes(&self) -> usize {
         self.change_bytes
     }
@@ -115,8 +113,6 @@ impl<S: Storage> Engine<S> {
 }
 
 impl Engine<crate::storage::MemoryStorage> {
-    /// Apply state already published by a different durable coordinator.
-    /// The volatile WAL remains its initial header and never acknowledges writes.
     pub(crate) fn apply_committed(&mut self, operation: Operation) {
         apply(
             &mut self.values,

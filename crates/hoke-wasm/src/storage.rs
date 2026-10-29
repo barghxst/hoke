@@ -1,5 +1,3 @@
-//! Synchronous JavaScript byte adapter and safe-integer I/O boundary.
-
 use std::io;
 
 use hoke_core::storage::Storage;
@@ -151,7 +149,6 @@ impl Storage for JsStorage {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // No Rust-side buffering. The OPFS flush is the sync_all boundary.
         Ok(())
     }
 

@@ -1,4 +1,3 @@
-//! Validate journal history and defer incomplete-tail repair until requested.
 use super::{
     Journal, JournalError, JournalRecovery,
     io::{checksum, io_error, payload_buffer, read_exact, record_end, sync},
@@ -17,8 +16,6 @@ impl<S: Storage> Journal<S> {
         Ok(journal)
     }
 
-    /// Validate the outer journal without repairing its incomplete EOF tail.
-    /// Callers may validate immutable payloads before explicitly enabling writes.
     pub fn open_deferred(mut storage: S) -> Result<Self, JournalError> {
         let length = storage.len().map_err(io_error("container length"))?;
         if length > MAX_FILE_BYTES {
@@ -100,7 +97,7 @@ impl<S: Storage> Journal<S> {
         }
         Ok(journal)
     }
-    /// Repair only a validated outer incomplete tail; failures poison this handle.
+
     pub fn repair_tail(&mut self) -> Result<(), JournalError> {
         self.readable()?;
         if !self.tail_pending {

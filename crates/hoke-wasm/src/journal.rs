@@ -1,5 +1,3 @@
-//! Opaque container segment publication and root metadata binding.
-
 use hoke_core::container::{
     Journal, MAX_ROOT_REFS, REF_LEN, SegmentKind, SegmentRef, decode_ref, encode_ref, encode_root,
 };
@@ -9,8 +7,6 @@ use wasm_bindgen::prelude::*;
 use crate::binding_error;
 use crate::storage::JsStorage;
 
-/// Append-only container publication over one caller-owned synchronous handle.
-/// Segment bytes remain opaque; close never commits or closes the JS handle.
 #[wasm_bindgen]
 pub struct WasmJournal {
     journal: Option<Journal<JsStorage>>,
@@ -47,7 +43,6 @@ impl WasmJournal {
         })
     }
 
-    /// Append an immutable opaque segment without publishing a logical commit.
     pub fn append(&mut self, kind: f64, payload: &[u8]) -> Result<Vec<u8>, JsError> {
         let journal = self
             .journal
@@ -65,8 +60,6 @@ impl WasmJournal {
         Ok(encode_ref(&reference).map_err(binding_error)?.to_vec())
     }
 
-    /// Validate descriptors, then publish a root through two file sync barriers.
-    /// Any error after publication starts has an unknown outcome until reopen.
     pub fn commit(&mut self, table_refs: &[u8], wal_refs: &[u8]) -> Result<(), JsError> {
         let journal = self
             .journal
@@ -82,7 +75,6 @@ impl WasmJournal {
         journal.commit(&tables, &wal).map_err(binding_error)
     }
 
-    /// Encoded root metadata, or an empty vector before the first commit.
     pub fn root(&self) -> Result<Vec<u8>, JsError> {
         let journal = self
             .journal
@@ -94,7 +86,6 @@ impl WasmJournal {
         }
     }
 
-    /// Read only a known active/pending descriptor, checking its payload CRC.
     pub fn read(&mut self, reference: &[u8]) -> Result<Vec<u8>, JsError> {
         let journal = self
             .journal
@@ -125,7 +116,6 @@ impl WasmJournal {
             .ok_or_else(|| binding_error("container journal is closed"))
     }
 
-    /// Drop Rust state only. This neither synchronizes nor closes the JS handle.
     pub fn close(&mut self) {
         self.journal.take();
     }

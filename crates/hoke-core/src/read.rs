@@ -1,14 +1,7 @@
-//! Read a caller-owned WAL and immutable sorted runs without publishing state.
-//!
-//! Tables must be ordered from oldest to newest. The WAL is newer than every
-//! table, including its tombstones. These helpers never write, flush, or repair
-//! storage; the caller remains responsible for source selection and ownership.
-
 use crate::sstable::{Lookup, SSTable};
 use crate::storage::Storage;
 use crate::{DbError, Engine, KeyValue, ScanOptions};
 
-/// Read only the newest matching version, without falling back after an error.
 pub fn get_from_sources<S: Storage>(
     wal: &Engine<S>,
     tables: &mut [SSTable<S>],
@@ -17,7 +10,6 @@ pub fn get_from_sources<S: Storage>(
     get_from_mixed_sources(wal, tables, key)
 }
 
-/// Read newest versions when WAL and immutable tables use different storage types.
 pub fn get_from_mixed_sources<W: Storage, T: Storage>(
     wal: &Engine<W>,
     tables: &mut [SSTable<T>],
@@ -36,11 +28,6 @@ pub fn get_from_mixed_sources<W: Storage, T: Storage>(
     Ok(None)
 }
 
-/// Merge live rows with an all-or-error budget on their key/value payload.
-///
-/// The budget excludes packet framing, allocations, indexes and cursor overhead.
-/// A selected SST record may be decoded before the budget is checked. Invalid
-/// bounds fail before storage reads; a valid zero limit performs no reads.
 pub fn scan_sources_with_budget<S: Storage>(
     wal: &Engine<S>,
     tables: &mut [SSTable<S>],
@@ -50,7 +37,6 @@ pub fn scan_sources_with_budget<S: Storage>(
     scan_mixed_sources_with_budget(wal, tables, options, max_payload_bytes)
 }
 
-/// Merge different WAL/table storage implementations with the same payload budget.
 pub fn scan_mixed_sources_with_budget<W: Storage, T: Storage>(
     wal: &Engine<W>,
     tables: &mut [SSTable<T>],

@@ -72,7 +72,7 @@ fn successive_processes_recover_payload_and_flush_only_before_exceeding_threshol
     assert!(at_limit.starts_with("memtable_entries=2, tables=0,"));
     assert!(at_limit.ends_with("memtable_bytes=4\n"));
     let before = snapshot(&path);
-    // Neither open, reads nor close apply the lower threshold.
+
     success(&path, &["--memtable-limit", "1", "info"]);
     success(&path, &["--memtable-limit", "1", "get", "a"]);
     success(&path, &["--memtable-limit", "1", "scan"]);
@@ -95,7 +95,7 @@ fn successive_processes_recover_payload_and_flush_only_before_exceeding_threshol
 fn threshold_is_not_persisted_and_manual_mode_remains_default() {
     let directory = TempDirectory::new();
     let path = directory.database();
-    // An oversized single operation is permitted on an empty memtable.
+
     success(&path, &["--memtable-limit", "1", "put", "first", "large"]);
     success(&path, &["put", "second", "larger"]);
     let info = success(&path, &["info"]);

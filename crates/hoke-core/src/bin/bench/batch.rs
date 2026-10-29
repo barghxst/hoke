@@ -1,5 +1,3 @@
-//! Batch writes, stale-run preparation, compaction, and SST reopen.
-
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -40,7 +38,7 @@ pub(super) fn run(
         model.insert(keys[i].clone(), values[i].clone());
     }
     verify(&mut db, &model)?;
-    // Deliberately stale runs and tombstones, prepared and verified outside timing.
+
     for &i in order.iter().take(c.keys.min(64)) {
         db.put(&keys[i], &values[(i + 1) % c.keys])?;
         model.insert(keys[i].clone(), values[(i + 1) % c.keys].clone());

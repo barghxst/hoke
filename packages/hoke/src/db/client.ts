@@ -28,7 +28,6 @@ function copyBytes(value: Uint8Array, maximum: number): Uint8Array {
   }
 }
 
-/** Public byte-key operations and subscriptions sharing one Worker session. */
 export class Client implements BrowserDB {
   private readonly watchers = new WatchRegistry();
   private readonly session: WorkerSession;

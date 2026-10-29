@@ -46,7 +46,6 @@ impl Storage for Adapter {
         Ok(n)
     }
     fn write_all_at(&mut self, offset: u64, bytes: &[u8]) -> io::Result<()> {
-        // A failed append is allowed to leave a prefix.
         if let Err(error) = self.event("write") {
             let mut s = self.0.borrow_mut();
             let end = offset as usize + bytes.len().min(3);
@@ -227,7 +226,7 @@ fn every_commit_io_failure_poisoned_and_unacknowledged_root_can_recover() {
         assert_eq!(adapter.0.borrow().events.len(), events);
         adapter.reset();
         let reopened = Journal::open(journal.into_storage()).unwrap();
-        // A root fully appended before a failed flush/sync is recoverable despite no ACK.
+
         assert_eq!(reopened.root().is_some(), fail >= 6);
     }
 }
@@ -311,11 +310,11 @@ fn checksum_valid_semantic_corruption_is_rejected_unchanged() {
     journal.commit(&[], &[a]).unwrap();
     let original = adapter.0.borrow().bytes.clone();
     for (offset, position, replacement) in [
-        (a.offset as usize, a.offset as usize + 8, 2_u64), // sequence skips 1
-        (first_root, first_root + 32, 2_u64),              // generation skips 1
-        (first_root, first_root + 32 + 24 + 8, a.offset + 32), // payload interior
-        (first_root, first_root + 32 + 24 + 8, first_root as u64), // root, not segment
-        (first_root, first_root + 32 + 24 + 8, original.len() as u64), // future
+        (a.offset as usize, a.offset as usize + 8, 2_u64),
+        (first_root, first_root + 32, 2_u64),
+        (first_root, first_root + 32 + 24 + 8, a.offset + 32),
+        (first_root, first_root + 32 + 24 + 8, first_root as u64),
+        (first_root, first_root + 32 + 24 + 8, original.len() as u64),
     ] {
         let mut bytes = original.clone();
         bytes[position..position + 8].copy_from_slice(&replacement.to_le_bytes());

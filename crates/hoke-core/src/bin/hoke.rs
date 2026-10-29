@@ -1,4 +1,3 @@
-//! Native CLI entry point; validation and execution belong to the CLI domain.
 mod cli;
 
 use std::process::ExitCode;

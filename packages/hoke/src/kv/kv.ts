@@ -3,7 +3,6 @@ import type { KVBackend, KVOptions, KVSource, Listener, Unsubscribe } from "./ba
 import { KVStorageError } from "./errors.js";
 import { assertJSON } from "./json.js";
 
-/** Validate before creating a platform backend, which can perform native I/O. */
 export function checkKVOptions(options: KVOptions<unknown>): void {
   if (typeof options.name !== "string" || options.name.length === 0) {
     throw new TypeError("KV name must not be empty");
@@ -13,7 +12,6 @@ export function checkKVOptions(options: KVOptions<unknown>): void {
   }
 }
 
-/** Platform-independent JSON KV. Platform facades supply the default backend. */
 export class KVCore<Value = unknown> implements KVSource<Value> {
   private readonly backend: KVBackend;
   private readonly name: string;
@@ -30,7 +28,7 @@ export class KVCore<Value = unknown> implements KVSource<Value> {
 
   private storageKey(key: string): string {
     if (typeof key !== "string") throw new TypeError("KV keys must be strings");
-    // Preserve pre-rename keys and avoid collisions between names and keys.
+
     return `stowtree:${JSON.stringify([this.name, key])}`;
   }
 

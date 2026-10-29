@@ -74,7 +74,7 @@ fn empty_table_index_ranges_are_empty() {
 #[test]
 fn index_metadata_does_not_read_corrupt_record_payloads() {
     let mut raw = bytes(sample());
-    // Damage the tombstone's key while preserving the valid index/header.
+
     let tombstone_offset = HEADER_LEN
         + wal::FRAME_HEADER_LEN
         + wal::TRAILER_LEN
@@ -139,7 +139,7 @@ fn rejects_corrupt_headers_and_index_but_payload_is_lazy() {
         bad[i] ^= 1;
         assert!(SSTable::open(from_bytes(&bad)).is_err(), "byte {i}");
     }
-    // The second frame contains key a and value first.
+
     let second = HEADER_LEN + wal::FRAME_HEADER_LEN + wal::TRAILER_LEN;
     let mut bad = valid;
     bad[second + wal::FRAME_HEADER_LEN + 1] ^= 1;
@@ -183,12 +183,12 @@ fn repaired_index_checksum_does_not_bypass_semantics() {
     bad[start..start + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     repair_index(&mut bad);
     assert!(SSTable::open(from_bytes(&bad)).is_err());
-    // b -> a makes duplicate sorted keys despite a valid CRC.
+
     let mut bad = valid.clone();
     bad[start + 12 + 13 + 4] = b'a';
     repair_index(&mut bad);
     assert!(SSTable::open(from_bytes(&bad)).is_err());
-    // a -> c is no longer sorted ahead of b.
+
     let mut bad = valid;
     bad[start + 12 + 4] = b'c';
     repair_index(&mut bad);

@@ -46,7 +46,6 @@ cargo run -q -p hoke-core -- --db /tmp/hoke-scan-demo scan --limit 0
 use std::ops::Bound::{Excluded, Included};
 use hoke_core::ScanOptions;
 
-// db: Database<NativeDirectory>, уже открыт.
 let rows = db.scan(ScanOptions {
     prefix: Some(b"user:".to_vec()),
     reverse: true,

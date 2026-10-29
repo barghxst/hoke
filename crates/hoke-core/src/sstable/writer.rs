@@ -1,4 +1,3 @@
-//! Preflight and streaming construction of unpublished immutable tables.
 use std::collections::BTreeMap;
 
 use crate::{
@@ -11,11 +10,6 @@ use super::{
     format::{HEADER_LEN, copy, header},
 };
 
-/// Write sorted entries to an empty destination, with `None` encoding a tombstone.
-///
-/// Input sizes are checked before the first write. An I/O error can leave a partial
-/// file, which must not be published. Success does not flush or synchronize storage;
-/// the caller must do so before publishing its reference.
 pub fn write_table<S: Storage>(
     storage: &mut S,
     entries: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
@@ -32,15 +26,11 @@ pub fn write_table<S: Storage>(
     Ok(())
 }
 
-/// Check record and index size limits without performing I/O.
-///
-/// This allows a caller to reject capacity errors before creating a candidate file.
-/// Ordering and uniqueness follow from the input's [`BTreeMap`] representation.
 pub fn validate_entries(entries: &BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), SstError> {
     if entries.len() > MAX_ENTRIES {
         return Err(SstError::Invalid("too many entries"));
     }
-    // Preflight every caller-controlled size before changing the destination.
+
     let mut index_len = 0usize;
     for (key, value) in entries {
         if key.len() > wal::MAX_KEY_BYTES {
@@ -62,9 +52,6 @@ pub fn validate_entries(entries: &BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<
     Ok(())
 }
 
-/// Stream an immutable run to a new file while retaining only its bounded key index.
-/// Any append error invalidates the writer; the partial file must not be published.
-/// The caller must flush/sync the completed file before publishing its reference.
 pub struct TableWriter<'a, S: Storage> {
     storage: &'a mut S,
     index: Vec<u8>,
@@ -75,8 +62,6 @@ pub struct TableWriter<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> TableWriter<'a, S> {
-    /// Begin a table in empty storage without flushing or synchronizing it.
-    /// A failed initialization can leave a partial file; do not publish that file.
     pub fn new(storage: &'a mut S) -> Result<Self, SstError> {
         if !storage.is_empty()? {
             return Err(SstError::Invalid("destination is not empty"));
@@ -92,8 +77,6 @@ impl<'a, S: Storage> TableWriter<'a, S> {
         })
     }
 
-    /// Append one key in strictly increasing byte order, including tombstones.
-    /// Any error invalidates this writer; subsequent append/finish calls fail.
     pub fn append(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<(), SstError> {
         if self.failed {
             return Err(SstError::Invalid("writer failed"));
@@ -131,7 +114,6 @@ impl<'a, S: Storage> TableWriter<'a, S> {
             return Err(SstError::Invalid("index too large"));
         }
         if self.index.capacity() < index_len {
-            // Geometric growth without requesting a capacity above the format limit.
             let capacity = self
                 .index
                 .capacity()
@@ -165,8 +147,6 @@ impl<'a, S: Storage> TableWriter<'a, S> {
         Ok(())
     }
 
-    /// Finish the index/header and return the record count without flush or sync.
-    /// On failure, discard the partial candidate rather than publishing it.
     pub fn finish(self) -> Result<usize, SstError> {
         if self.failed {
             return Err(SstError::Invalid("writer failed"));

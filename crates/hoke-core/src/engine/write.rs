@@ -1,5 +1,3 @@
-//! WAL mutation protocol: validate, append and sync, then publish memory state.
-
 use super::changes::apply;
 use super::error::io_error;
 use super::{Engine, Error, sync};
@@ -60,8 +58,6 @@ impl<S: Storage> Engine<S> {
         Ok(())
     }
 
-    /// Explicitly check final synchronization and release the storage/lock.
-    /// A poisoned engine must instead be dropped and reopened for recovery.
     pub fn close(mut self) -> Result<(), Error> {
         self.check_writable()?;
         sync(&mut self.storage)

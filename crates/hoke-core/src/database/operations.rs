@@ -1,4 +1,3 @@
-//! User reads, writes, atomic batches, and pre-write capacity policy.
 use crate::{Error, directory::Directory, manifest, sstable};
 
 use super::{Database, DbError};
@@ -8,7 +7,7 @@ pub struct DatabaseStats {
     pub memtable_entries: usize,
     pub table_count: usize,
     pub wal_bytes: u64,
-    /// Dirty key/value payload bytes, excluding container/allocator overhead.
+
     pub memtable_bytes: usize,
 }
 
@@ -17,13 +16,10 @@ impl<D: Directory> Database<D> {
         crate::read::get_from_sources(&self.wal, &mut self.tables, key)
     }
 
-    /// Merge bounded keys across memtable and SSTs; read only winning values.
-    /// The default result limit is 100. Errors never return a partial result.
     pub fn scan(&mut self, options: crate::ScanOptions) -> Result<Vec<crate::KeyValue>, DbError> {
         crate::scan::scan_sources(&self.wal, &mut self.tables, options)
     }
 
-    /// Alias for scan, with the same Included/Excluded boundary semantics.
     pub fn range(&mut self, options: crate::ScanOptions) -> Result<Vec<crate::KeyValue>, DbError> {
         self.scan(options)
     }
@@ -46,8 +42,7 @@ impl<D: Directory> Database<D> {
         let result = self.wal.delete(key);
         self.mutation(result)
     }
-    // Flush before the requested mutation is appended. A preflush error cannot
-    // hide a successful commit of that mutation behind a maintenance error.
+
     fn prepare_write(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<(), DbError> {
         self.writable()?;
         if key.len() > crate::wal::MAX_KEY_BYTES
@@ -81,10 +76,6 @@ impl<D: Directory> Database<D> {
         Ok(())
     }
 
-    /// Atomically publish all operations in order, including the current WAL delta.
-    /// Each nonempty batch creates an SST and an empty WAL through manifest commit.
-    /// Input/capacity errors leave the database writable; publication errors poison
-    /// it until reopen, where the complete batch may be present or absent.
     pub fn write_batch(&mut self, operations: &[crate::BatchOperation]) -> Result<(), DbError> {
         self.writable()?;
         crate::validate_batch(operations)?;
@@ -109,8 +100,6 @@ impl<D: Directory> Database<D> {
         }
         sstable::validate_entries(&entries).map_err(DbError::Sst)?;
         if let Err(error) = self.flush_inner(&entries) {
-            // Limit errors here can only precede file creation (generation/table
-            // exhaustion); unlike an uncertain IO outcome they do not poison.
             if !matches!(&error, DbError::Limit(_)) {
                 self.poisoned = true;
             }

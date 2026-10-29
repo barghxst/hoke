@@ -13,7 +13,6 @@ interface LoadedValue<T> {
   state: DBValueState<T>;
 }
 
-/** Read one document and reload after commits on this collection's connection. */
 export function useDBValue<T>(collection: Collection<T>, key: string): DBValueState<T> {
   const selection = useMemo(() => ({ collection, key }), [collection, key]);
   const [loaded, setLoaded] = useState<LoadedValue<T> | undefined>();
@@ -28,7 +27,7 @@ export function useDBValue<T>(collection: Collection<T>, key: string): DBValueSt
     const load = () => {
       const request = ++revision;
       publish(loading);
-      // Promise chaining also captures a synchronous adapter/closed-DB error.
+
       void Promise.resolve()
         .then(() => {
           if (active && request === revision) return collection.get(key);
@@ -50,8 +49,6 @@ export function useDBValue<T>(collection: Collection<T>, key: string): DBValueSt
 
     let unsubscribe: (() => void) | undefined;
     try {
-      // Subscribe first: a commit between subscription and reading causes a
-      // fresh read, and a superseded read cannot overwrite its result.
       unsubscribe = collection.subscribe(key, load);
       load();
     } catch (error) {
@@ -62,8 +59,6 @@ export function useDBValue<T>(collection: Collection<T>, key: string): DBValueSt
       active = false;
       revision++;
       unsubscribe?.();
-      // Do not abort an in-flight operation: DB cancellation can close the
-      // whole connection. Its completion is simply ignored after cleanup.
     };
   }, [selection]);
 

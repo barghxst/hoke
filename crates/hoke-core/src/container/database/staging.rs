@@ -1,4 +1,3 @@
-//! Bounded temporary SST output; no persistent publication occurs here.
 use super::ContainerDbError;
 use crate::container::MAX_SEGMENT_BYTES;
 use crate::storage::{MemoryStorage, Storage};

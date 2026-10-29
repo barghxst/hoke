@@ -1,5 +1,3 @@
-//! CLI options, bounds, and the configuration JSON record.
-
 use std::fs;
 use std::path::PathBuf;
 

@@ -1,4 +1,3 @@
-//! Native CLI orchestration: validate first, then choose one storage backend.
 mod arguments;
 mod directory;
 mod wal;

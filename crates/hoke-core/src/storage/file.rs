@@ -4,31 +4,20 @@ use std::path::Path;
 
 use super::Storage;
 
-/// An exclusively owned file with cooperative, nonblocking writer exclusion.
-///
-/// The lock lasts until this value is dropped. It protects cooperating openers,
-/// not code that ignores locks or replaces/unlinks the path. Opening creates a
-/// missing file, but does not create or synchronize its parent directory.
 #[derive(Debug)]
 pub struct FileStorage {
     file: File,
 }
 
 impl FileStorage {
-    /// Open or create a file without truncating existing bytes, then lock it.
-    ///
-    /// An already locked file produces an error immediately. No file handle is
-    /// exposed or cloned, so the owner cannot accidentally release its lock.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::open_with_options(path.as_ref(), true, false)
     }
 
-    /// Open an existing file without creating a missing referenced file.
     pub fn open_existing(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::open_with_options(path.as_ref(), false, false)
     }
 
-    /// Create a new file, rejecting a collision without changing existing bytes.
     pub fn create_new(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::open_with_options(path.as_ref(), false, true)
     }
@@ -67,7 +56,7 @@ impl Storage for FileStorage {
         if buffer.is_empty() {
             return Ok(0);
         }
-        // Avoid a platform-specific seek error for valid offsets past EOF.
+
         if offset >= self.len()? {
             return Ok(0);
         }
@@ -133,7 +122,6 @@ mod tests {
 
     impl Drop for TempDirectory {
         fn drop(&mut self) {
-            // Test files are closed first by reverse declaration/drop order.
             let _ = fs::remove_dir_all(&self.0);
         }
     }
@@ -175,7 +163,7 @@ mod tests {
         assert!(FileStorage::open(directory.file()).is_err());
         assert_eq!(read_bytes(&mut first), b"preserve me");
         first.write_all_at(11, b"!").unwrap();
-        // A failed opener must not release the original owner's lock either.
+
         assert!(FileStorage::open(directory.file()).is_err());
         drop(first);
         let mut next = FileStorage::open(directory.file()).unwrap();

@@ -1,4 +1,3 @@
-//! Shared SST v1 byte layout, fallible buffers, and bounded storage reads.
 use crate::storage::Storage;
 
 use super::SstError;

@@ -3,7 +3,6 @@ import { abortedError, cancellation } from "./client-cancellation.js";
 import { type BrowserDB, DBError, type OpenDBOptions } from "./client-contract.js";
 import { validName } from "./protocol.js";
 
-/** Timeout or transport failure closes the connection. Never automatically retry a mutation. */
 export async function openDB(name: string, options: OpenDBOptions = {}): Promise<BrowserDB> {
   if (!validName(name)) throw new DBError("INVALID_ARGUMENT", "Invalid database name");
   if (options === null || typeof options !== "object") {

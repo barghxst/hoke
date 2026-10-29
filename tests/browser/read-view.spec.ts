@@ -1,6 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
 
-/** Execute in a dedicated Worker: OPFS sync handles are unavailable on Window. */
 async function inWorker(page: Page, body: string): Promise<unknown> {
   await page.goto("/examples/web/");
   return page.evaluate(async (body) => {
